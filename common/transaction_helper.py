@@ -12,6 +12,8 @@ from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.styles import Font, Alignment, Border, Side
 import pandas as pd
 from urllib.parse import urlparse, parse_qs
+from openpyxl import Workbook
+import io
  
 # Helper: Execute query 
 def execute_query(sql_query, params=None, db_alias='default'):
@@ -848,22 +850,22 @@ def log_exception(request, exception):
         print(f"Failed to log exception: {str(e)}")
  
  
-def generate_custom_excel(data, headers, title, file_name, dir):
+def generate_custom_excel(data, headers, title,):
     """
-    Generate an Excel file with customizable content.
+    Generate an Excel file in memory with customizable content.
  
     Parameters:
     - data (list of dict): The data to populate the Excel file, where each dict represents a row.
     - headers (list of str): Column headers for the Excel sheet.
     - title (str): Title for the report.
-    - file_name (str): The name of the file to save.
-    - dir (str): The directory to save the file in.
-    """
  
+    Returns:
+    - BytesIO: An in-memory Excel file.
+    """
     # Create a new workbook and select active sheet
-    wb = openpyxl.Workbook()
+    wb = Workbook()
     ws = wb.active
-    ws.title = "Whitelist Metal Detector"
+    ws.title = title
  
     # Title Row
     ws['A1'] = title
@@ -903,7 +905,7 @@ def generate_custom_excel(data, headers, title, file_name, dir):
                 cell_value = cell_value.strftime('%d-%m-%Y')
  
             cell = ws.cell(row=row_index, column=col_index, value=cell_value)
-            cell.alignment = Alignment(horizontal="left" if header in ["Employee Name", "Description"] else "center", vertical="center")
+            cell.alignment = Alignment(horizontal="left" if header in ["Meeting title","Meeting room", "Date Meeting", "Start Meeting", "Finish Meeting", "Participant", "Request", "Booking Date", "Status","Meeting Qty"] else "center", vertical="center")
             cell.border = Border(
                 top=Side(border_style="thin", color="000000"),
                 left=Side(border_style="thin", color="000000"),
@@ -911,36 +913,19 @@ def generate_custom_excel(data, headers, title, file_name, dir):
                 bottom=Side(border_style="thin", color="000000")
             )
  
-    for row in ws.iter_rows(min_row=5, max_row=ws.max_row, min_col=2, max_col=2):  # (Column B)
-        for cell in row:
-            cell.alignment = Alignment(horizontal="left", vertical="center")
- 
-    for row in ws.iter_rows(min_row=5, max_row=ws.max_row, min_col=3, max_col=3):  # (Column C)
-        for cell in row:
-            cell.alignment = Alignment(horizontal="left", vertical="center") 
- 
     # Adjust column widths
     column_widths = {
-        "A": 10, "B": 40, "C": 60, "D": 30, "E": 15
+        "A": 10, "B": 40, "C": 20, "D": 20, "E": 20,"F": 20,"F": 20,"G": 30,"H": 30,"I": 30
     }
     for col_letter, width in column_widths.items():
         ws.column_dimensions[col_letter].width = width
  
-    export_dir = os.path.join(os.path.dirname(__file__), f'{dir}')
-    if not os.path.exists(export_dir):
-        os.makedirs(export_dir)
+    # Save workbook to an in-memory buffer
+    output_buffer = io.BytesIO()
+    wb.save(output_buffer)
+    output_buffer.seek(0)  # Move cursor to the start of the buffer
  
-    # Output file path
-    output_path = os.path.join(export_dir, f'{file_name}.xlsx')
- 
-    # If file exists, add timestamp to filename
-    if os.path.exists(output_path):
-        timestamp = datetime.now().strftime('%d_%b_%Y_%H_%M_%S')
-        output_path = os.path.join(export_dir, f'{file_name.split(".")[0]}_{timestamp}.xlsx')
- 
-    # Save the workbook
-    wb.save(output_path)
-    print(f"Excel file saved at {output_path}")
+    return output_buffer
  
 def generate_excel_from_template(data, url=None, output_file_name="dashboard_report.xlsx"):
     """
