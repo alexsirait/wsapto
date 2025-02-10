@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Report</title>
+    <style>
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            border: 1px solid #000;
+            padding: 8px;
+            text-align: center;
+        }
+        th {
+            background-color: #f4f4f4;
+        }
+    </style>
+</head>
+<body>
+    <h1>Dashboard Report</h1>
+
+    <h2>Monthly Report</h2>
+    <table>
+        <thead>
+            <tr>
+                <th></th>
+                {% for header in sheet_data[0]['headers'] %}
+                    <th>{{ header }}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in sheet_data[0]['data'] %}
+            <tr>
+                <td>{{ row.label }}</td>
+                {% for header in sheet_data[0]['headers'] %}
+                    <td>{{ row[header] }}</td>
+                {% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <h2>Today's Report</h2>
+    <table>
+        <thead>
+            <tr>
+                <th></th>
+                {% for header in sheet_data[1]['headers'] %}
+                    <th>{{ header }}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in sheet_data[1]['data'] %}
+            <tr>
+                <td>{{ row.label }}</td>
+                {% for header in sheet_data[1]['headers'] %}
+                    <td>{{ row[header] }}</td>
+                {% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <h2>Daily's Report</h2>
+    <table>
+        <thead>
+            <tr>
+                <th></th>
+                {% for header in sheet_data[2]['headers'] %}
+                    <th>{{ header }}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in sheet_data[2]['data'] %}
+            <tr>
+                <td>{{ row.label }}</td>
+                {% for header in sheet_data[2]['headers'] %}
+                    <td>{{ row[header] }}</td>
+                {% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>
