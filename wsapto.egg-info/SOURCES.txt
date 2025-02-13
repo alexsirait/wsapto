@@ -5,6 +5,7 @@ setup.py
 common/__init__.py
 common/code_helper.py
 common/dictfetch_helper.py
+common/export_excel.py
 common/file_upload_helper.py
 common/format_date.py
 common/pagination_helper.py
