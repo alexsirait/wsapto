@@ -832,10 +832,10 @@ def validate_method(
     rate_limit=60,
     time_window=10,
     method_specific=True,
-    max_signature_lifetime=10,
+    max_signature_lifetime=6,
     require_api_key=False,
     block_bots=True,
-    duplicate_tolerance=3
+    duplicate_tolerance=5
 ):
     """
     Validasi method, rate limiting, duplicate request, dan keamanan API Key.
