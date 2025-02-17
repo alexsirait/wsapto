@@ -2,7 +2,7 @@ from django.core.paginator import Paginator
 
 def paginate_data(request, data):
     page_number = request.GET.get('page', None)
-    page_size = request.GET.get('page_size', None)
+    page_size = request.GET.get('page_size', 10)
 
     if not page_number and not page_size:
         return {
