@@ -24,12 +24,14 @@ import threading
 cache_lock = threading.Lock()
 
 # Cache untuk rate limiting per method dan IP
-# Struktur: { "ip": {"method": deque([timestamps])} } atau { "ip": deque([timestamps]) }
 RATE_LIMIT_CACHE = {}
 
 # Cache untuk duplicate request berdasarkan signature per IP
-# Struktur: { "ip": { "request_signature": timestamp } }
 REQUEST_SIGNATURES = {}
+
+# Maksimal duplicate request yang diperbolehkan dalam time_window
+duplicate_limit = 5
+duplicate_time_window = 10  # dalam detik
  
 # Helper: Execute query 
 def execute_query(sql_query, params=None, db_alias='default'):
@@ -830,12 +832,10 @@ def validate_method(
     request,
     required_method,
     rate_limit=60,
-    time_window=10,
+    time_window=60,
     method_specific=True,
-    max_signature_lifetime=6,
     require_api_key=False,
-    block_bots=True,
-    duplicate_tolerance=5
+    block_bots=True
 ):
     """
     Validasi method, rate limiting, duplicate request, dan keamanan API Key.
@@ -846,17 +846,15 @@ def validate_method(
         rate_limit (int): Maksimal request dalam `time_window` detik per IP.
         time_window (int): Durasi dalam detik untuk batasan rate limit.
         method_specific (bool): Validasi rate limit untuk method tertentu (True = spesifik per method, False = per IP global).
-        max_signature_lifetime (int): Waktu dalam detik untuk memeriksa keunikan signature.
         require_api_key (bool): Apakah perlu API key dalam request header.
         block_bots (bool): Apakah harus memblokir akses dari bot atau user-agent tidak dikenal.
-        duplicate_tolerance (int): Durasi toleransi duplicate request dalam detik.
 
     Raises:
         ValueError: Jika terjadi pelanggaran aturan.
     """
     client_ip = get_client_ip(request)
     method = request.method.upper()
-    now = time.monotonic()  # Menggunakan monotonic clock untuk stabilitas perhitungan waktu
+    now = time.monotonic()
 
     # 1. Validasi Method
     if method != required_method.upper():
@@ -865,10 +863,8 @@ def validate_method(
     # 2. Rate Limiting per Method dan IP
     with cache_lock:
         if method_specific:
-            # Buat atau ambil cache IP, lalu cache method
             ip_cache = RATE_LIMIT_CACHE.setdefault(client_ip, {})
             method_cache = ip_cache.setdefault(method, deque(maxlen=rate_limit))
-            # Bersihkan entry yang sudah melewati time window
             while method_cache and now - method_cache[0] > time_window:
                 method_cache.popleft()
             if len(method_cache) >= rate_limit:
@@ -886,18 +882,15 @@ def validate_method(
                 )
             ip_cache.append(now)
 
-    # 3. Mencegah Replay Attack dengan Signature Unik
+    # 3. Duplicate Request Limiting
     request_signature = generate_request_signature(request)
     with cache_lock:
-        ip_signatures = REQUEST_SIGNATURES.setdefault(client_ip, {})
-        last_request_time = ip_signatures.get(request_signature)
-        if last_request_time is not None:
-            elapsed = now - last_request_time
-            if elapsed < max_signature_lifetime:
-                if elapsed >= duplicate_tolerance:
-                    raise ValueError("Duplicate request detected. Possible replay attack.")
-                # Jika dalam duplicate_tolerance, kita anggap sebagai duplikat yang valid (tanpa error)
-        ip_signatures[request_signature] = now
+        ip_signatures = REQUEST_SIGNATURES.setdefault(client_ip, deque(maxlen=duplicate_limit))
+        while ip_signatures and now - ip_signatures[0] > duplicate_time_window:
+            ip_signatures.popleft()
+        if len(ip_signatures) >= duplicate_limit:
+            raise ValueError("Duplicate request limit exceeded. Try again later.")
+        ip_signatures.append(now)
 
     # 4. Validasi API Key (Opsional)
     if require_api_key:
@@ -910,18 +903,6 @@ def validate_method(
         user_agent = request.headers.get("User-Agent", "").lower()
         if not user_agent or "bot" in user_agent or "crawler" in user_agent or len(user_agent) < 10:
             raise ValueError("Access denied: Suspicious user-agent detected.")
-
-    # 6. Proteksi CORS (Mencegah akses dari domain tidak sah)
-    allowed_origins = {"https://example.com", "http://localhost:3000"}
-    origin = request.headers.get("Origin")
-    if origin and origin not in allowed_origins:
-        raise ValueError("CORS policy violation: Origin not allowed.")
-
-    # 7. Proteksi Content-Length (Mencegah Request Terlalu Besar)
-    max_content_length = 2 * 1024 * 1024  # 2MB
-    content_length = request.headers.get("Content-Length")
-    if content_length and int(content_length) > max_content_length:
-        raise ValueError("Request too large. Max allowed size is 2MB.")
 
 # Helper untuk Mendapatkan IP Client
 def get_client_ip(request):
@@ -945,6 +926,7 @@ def generate_request_signature(request):
     )
     hash_digest = hashlib.sha256(data.encode()).digest()
     return base64.b64encode(hash_digest).decode()
+
  
 def log_exception(request, exception):
     try:
