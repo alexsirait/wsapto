@@ -899,8 +899,8 @@ def validate_method(
     # 4. Validasi API Key (Opsional)
     if require_api_key:
         api_key = request.headers.get("X-API-KEY")
-        if not api_key or len(api_key) < 20 or not api_key.isalnum():
-            raise ValueError("Unauthorized: Missing or invalid API key.")
+        if not api_key or len(api_key) != 20 or not api_key.isalnum() or "mysatnusa" not in api_key:
+            raise ValueError("Unauthorized: Missing, invalid, or incorrect API key.")
 
     # 5. Blokir User-Agent yang Mencurigakan (Anti Bot & Scraper)
     if block_bots:
