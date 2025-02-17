@@ -839,57 +839,61 @@ def validate_method(
 ):
     """
     Validasi method, rate limiting, duplicate request, dan keamanan API Key.
-
     Args:
         request: Request object Django.
         required_method (str): Method yang diizinkan ("GET", "POST", dll).
-        rate_limit (int): Maksimal request dalam `time_window` detik per IP.
+        rate_limit (int): Maksimal request dalam `time_window` detik per IP dan endpoint.
         time_window (int): Durasi dalam detik untuk batasan rate limit.
         method_specific (bool): Validasi rate limit untuk method tertentu (True = spesifik per method, False = per IP global).
         require_api_key (bool): Apakah perlu API key dalam request header.
         block_bots (bool): Apakah harus memblokir akses dari bot atau user-agent tidak dikenal.
-
     Raises:
         ValueError: Jika terjadi pelanggaran aturan.
     """
     client_ip = get_client_ip(request)
     method = request.method.upper()
     now = time.monotonic()
+    endpoint = request.path  # Menggunakan path sebagai bagian dari cache key
 
     # 1. Validasi Method
     if method != required_method.upper():
         raise ValueError(f"Method {method} not allowed. Use {required_method}.")
 
-    # 2. Rate Limiting per Method dan IP
+    # 2. Rate Limiting per Method dan IP berdasarkan endpoint
     with cache_lock:
         if method_specific:
-            ip_cache = RATE_LIMIT_CACHE.setdefault(client_ip, {})
+            # Memperhitungkan endpoint dalam rate limiting
+            endpoint_cache = RATE_LIMIT_CACHE.setdefault(endpoint, {})
+            ip_cache = endpoint_cache.setdefault(client_ip, {})
             method_cache = ip_cache.setdefault(method, deque(maxlen=rate_limit))
             while method_cache and now - method_cache[0] > time_window:
                 method_cache.popleft()
             if len(method_cache) >= rate_limit:
                 raise ValueError(
-                    f"Rate limit exceeded for {method} ({rate_limit} requests per {time_window} seconds). Try again later."
+                    f"Rate limit exceeded for {method} on {endpoint} ({rate_limit} requests per {time_window} seconds). Try again later."
                 )
             method_cache.append(now)
         else:
-            ip_cache = RATE_LIMIT_CACHE.setdefault(client_ip, deque(maxlen=rate_limit))
+            # Rate limiting per IP dan endpoint
+            endpoint_cache = RATE_LIMIT_CACHE.setdefault(endpoint, {})
+            ip_cache = endpoint_cache.setdefault(client_ip, deque(maxlen=rate_limit))
             while ip_cache and now - ip_cache[0] > time_window:
                 ip_cache.popleft()
             if len(ip_cache) >= rate_limit:
                 raise ValueError(
-                    f"Rate limit exceeded ({rate_limit} requests per {time_window} seconds). Try again later."
+                    f"Rate limit exceeded for {endpoint} ({rate_limit} requests per {time_window} seconds). Try again later."
                 )
             ip_cache.append(now)
 
     # 3. Duplicate Request Limiting
-    request_signature = generate_request_signature(request)
+    request_signature = generate_request_signature(request, endpoint)
     with cache_lock:
-        ip_signatures = REQUEST_SIGNATURES.setdefault(client_ip, deque(maxlen=duplicate_limit))
+        endpoint_signatures = REQUEST_SIGNATURES.setdefault(endpoint, {})
+        ip_signatures = endpoint_signatures.setdefault(client_ip, deque(maxlen=duplicate_limit))
         while ip_signatures and now - ip_signatures[0] > duplicate_time_window:
             ip_signatures.popleft()
         if len(ip_signatures) >= duplicate_limit:
-            raise ValueError("Duplicate request limit exceeded. Try again later.")
+            raise ValueError("Duplicate request limit exceeded for this endpoint. Try again later.")
         ip_signatures.append(now)
 
     # 4. Validasi API Key (Opsional)
@@ -911,10 +915,11 @@ def get_client_ip(request):
         return forwarded.split(",")[0].strip()
     return request.META.get("REMOTE_ADDR", "0.0.0.0")
 
-# Helper untuk Membuat Signature Unik dari Request
-def generate_request_signature(request):
+# Helper untuk Membuat Signature Unik dari Request berdasarkan Endpoint
+def generate_request_signature(request, endpoint):
     """
-    Membuat signature unik menggunakan hash SHA-256 untuk mencegah replay attack.
+    Membuat signature unik menggunakan hash SHA-256 untuk mencegah replay attack,
+    memperhitungkan endpoint dalam signature.
     """
     data = (
         f"{request.method}-"
@@ -922,7 +927,8 @@ def generate_request_signature(request):
         f"{request.headers.get('User-Agent', '')}-"
         f"{request.headers.get('Content-Length', '')}-"
         f"{str(request.GET)}-"
-        f"{str(request.body)}"
+        f"{str(request.body)}-"
+        f"{endpoint}"  # Menambahkan endpoint ke dalam signature
     )
     hash_digest = hashlib.sha256(data.encode()).digest()
     return base64.b64encode(hash_digest).decode()
