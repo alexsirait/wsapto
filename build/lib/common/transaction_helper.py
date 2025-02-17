@@ -14,6 +14,22 @@ import pandas as pd
 from urllib.parse import urlparse, parse_qs
 from openpyxl import Workbook
 import io
+import time
+import hashlib
+import base64
+from collections import deque
+import threading
+
+# Global lock untuk sinkronisasi akses ke cache
+cache_lock = threading.Lock()
+
+# Cache untuk rate limiting per method dan IP
+# Struktur: { "ip": {"method": deque([timestamps])} } atau { "ip": deque([timestamps]) }
+RATE_LIMIT_CACHE = {}
+
+# Cache untuk duplicate request berdasarkan signature per IP
+# Struktur: { "ip": { "request_signature": timestamp } }
+REQUEST_SIGNATURES = {}
  
 # Helper: Execute query 
 def execute_query(sql_query, params=None, db_alias='default'):
@@ -810,10 +826,125 @@ def validate_request(data, rules):
     # No errors, validation passed
     return None
  
-def validate_method(request, required_method):
-    if request.method != required_method:
-        raise ValueError(f"Method not allowed. Please use {required_method} method.")
- 
+def validate_method(
+    request,
+    required_method,
+    rate_limit=60,
+    time_window=10,
+    method_specific=True,
+    max_signature_lifetime=10,
+    require_api_key=False,
+    block_bots=True,
+    duplicate_tolerance=3
+):
+    """
+    Validasi method, rate limiting, duplicate request, dan keamanan API Key.
+
+    Args:
+        request: Request object Django.
+        required_method (str): Method yang diizinkan ("GET", "POST", dll).
+        rate_limit (int): Maksimal request dalam `time_window` detik per IP.
+        time_window (int): Durasi dalam detik untuk batasan rate limit.
+        method_specific (bool): Validasi rate limit untuk method tertentu (True = spesifik per method, False = per IP global).
+        max_signature_lifetime (int): Waktu dalam detik untuk memeriksa keunikan signature.
+        require_api_key (bool): Apakah perlu API key dalam request header.
+        block_bots (bool): Apakah harus memblokir akses dari bot atau user-agent tidak dikenal.
+        duplicate_tolerance (int): Durasi toleransi duplicate request dalam detik.
+
+    Raises:
+        ValueError: Jika terjadi pelanggaran aturan.
+    """
+    client_ip = get_client_ip(request)
+    method = request.method.upper()
+    now = time.monotonic()  # Menggunakan monotonic clock untuk stabilitas perhitungan waktu
+
+    # 1. Validasi Method
+    if method != required_method.upper():
+        raise ValueError(f"Method {method} not allowed. Use {required_method}.")
+
+    # 2. Rate Limiting per Method dan IP
+    with cache_lock:
+        if method_specific:
+            # Buat atau ambil cache IP, lalu cache method
+            ip_cache = RATE_LIMIT_CACHE.setdefault(client_ip, {})
+            method_cache = ip_cache.setdefault(method, deque(maxlen=rate_limit))
+            # Bersihkan entry yang sudah melewati time window
+            while method_cache and now - method_cache[0] > time_window:
+                method_cache.popleft()
+            if len(method_cache) >= rate_limit:
+                raise ValueError(
+                    f"Rate limit exceeded for {method} ({rate_limit} requests per {time_window} seconds). Try again later."
+                )
+            method_cache.append(now)
+        else:
+            ip_cache = RATE_LIMIT_CACHE.setdefault(client_ip, deque(maxlen=rate_limit))
+            while ip_cache and now - ip_cache[0] > time_window:
+                ip_cache.popleft()
+            if len(ip_cache) >= rate_limit:
+                raise ValueError(
+                    f"Rate limit exceeded ({rate_limit} requests per {time_window} seconds). Try again later."
+                )
+            ip_cache.append(now)
+
+    # 3. Mencegah Replay Attack dengan Signature Unik
+    request_signature = generate_request_signature(request)
+    with cache_lock:
+        ip_signatures = REQUEST_SIGNATURES.setdefault(client_ip, {})
+        last_request_time = ip_signatures.get(request_signature)
+        if last_request_time is not None:
+            elapsed = now - last_request_time
+            if elapsed < max_signature_lifetime:
+                if elapsed >= duplicate_tolerance:
+                    raise ValueError("Duplicate request detected. Possible replay attack.")
+                # Jika dalam duplicate_tolerance, kita anggap sebagai duplikat yang valid (tanpa error)
+        ip_signatures[request_signature] = now
+
+    # 4. Validasi API Key (Opsional)
+    if require_api_key:
+        api_key = request.headers.get("X-API-KEY")
+        if not api_key or len(api_key) < 20 or not api_key.isalnum():
+            raise ValueError("Unauthorized: Missing or invalid API key.")
+
+    # 5. Blokir User-Agent yang Mencurigakan (Anti Bot & Scraper)
+    if block_bots:
+        user_agent = request.headers.get("User-Agent", "").lower()
+        if not user_agent or "bot" in user_agent or "crawler" in user_agent or len(user_agent) < 10:
+            raise ValueError("Access denied: Suspicious user-agent detected.")
+
+    # 6. Proteksi CORS (Mencegah akses dari domain tidak sah)
+    allowed_origins = {"https://example.com", "http://localhost:3000"}
+    origin = request.headers.get("Origin")
+    if origin and origin not in allowed_origins:
+        raise ValueError("CORS policy violation: Origin not allowed.")
+
+    # 7. Proteksi Content-Length (Mencegah Request Terlalu Besar)
+    max_content_length = 2 * 1024 * 1024  # 2MB
+    content_length = request.headers.get("Content-Length")
+    if content_length and int(content_length) > max_content_length:
+        raise ValueError("Request too large. Max allowed size is 2MB.")
+
+# Helper untuk Mendapatkan IP Client
+def get_client_ip(request):
+    forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.META.get("REMOTE_ADDR", "0.0.0.0")
+
+# Helper untuk Membuat Signature Unik dari Request
+def generate_request_signature(request):
+    """
+    Membuat signature unik menggunakan hash SHA-256 untuk mencegah replay attack.
+    """
+    data = (
+        f"{request.method}-"
+        f"{request.META.get('REMOTE_ADDR')}-"
+        f"{request.headers.get('User-Agent', '')}-"
+        f"{request.headers.get('Content-Length', '')}-"
+        f"{str(request.GET)}-"
+        f"{str(request.body)}"
+    )
+    hash_digest = hashlib.sha256(data.encode()).digest()
+    return base64.b64encode(hash_digest).decode()
  
 def log_exception(request, exception):
     try:
