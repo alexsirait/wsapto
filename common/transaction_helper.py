@@ -32,6 +32,10 @@ REQUEST_SIGNATURES = {}
 # Maksimal duplicate request yang diperbolehkan dalam time_window
 duplicate_limit = 5
 duplicate_time_window = 10  # dalam detik
+
+# Secret Key untuk API Key
+SECRET_KEY = "MySatnusa"
+API_KEY_EXPIRATION = 86400 
  
 # Helper: Execute query 
 def execute_query(sql_query, params=None, db_alias='default'):
@@ -899,8 +903,27 @@ def validate_method(
     # 4. Validasi API Key (Opsional)
     if require_api_key:
         api_key = request.headers.get("X-API-KEY")
-        if not api_key or len(api_key) != 20 or not api_key.isalnum() or "mysatnusa" not in api_key:
-            raise ValueError("Unauthorized: Missing, invalid, or incorrect API key.")
+        timestamp = request.headers.get("X-TIMESTAMP")
+
+        if not api_key or not timestamp:
+            raise ValueError("Unauthorized: Missing API Key or Timestamp")
+
+        try:
+            request_time = int(timestamp)
+            current_time = int(time.time())
+
+            if abs(current_time - request_time) > API_KEY_EXPIRATION:
+                raise ValueError("Unauthorized: Expired or invalid timestamp")
+
+            # Generate API Key untuk bulan ini
+            month_string = datetime.datetime.utcfromtimestamp(request_time).strftime("%Y-%m")
+            expected_api_key = generate_monthly_api_key(month_string)
+
+            if not hmac.compare_digest(api_key, expected_api_key):
+                raise ValueError("Unauthorized: Invalid API Key")
+
+        except ValueError:
+            raise ValueError("Unauthorized: Invalid timestamp format")
 
     # 5. Blokir User-Agent yang Mencurigakan (Anti Bot & Scraper)
     if block_bots:
@@ -933,6 +956,9 @@ def generate_request_signature(request, endpoint):
     hash_digest = hashlib.sha256(data.encode()).digest()
     return base64.b64encode(hash_digest).decode()
 
+def generate_monthly_api_key(month_string):
+    """Membuat API key berdasarkan bulan"""
+    return hmac.new(SECRET_KEY.encode(), month_string.encode(), hashlib.sha256).hexdigest()
  
 def log_exception(request, exception):
     try:
