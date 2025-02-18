@@ -916,7 +916,7 @@ def validate_method(
                 raise ValueError("Unauthorized: Expired or invalid timestamp")
 
             # Generate API Key untuk bulan ini
-            month_string = datetime.datetime.utcfromtimestamp(request_time).strftime("%Y-%m")
+            month_string = datetime.utcfromtimestamp(request_time).strftime("%Y-%m")
             expected_api_key = generate_monthly_api_key(month_string)
 
             if not hmac.compare_digest(api_key, expected_api_key):
