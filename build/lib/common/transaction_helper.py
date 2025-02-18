@@ -19,6 +19,7 @@ import hashlib
 import base64
 from collections import deque
 import threading
+import hmac
 
 # Global lock untuk sinkronisasi akses ke cache
 cache_lock = threading.Lock()
@@ -35,7 +36,6 @@ duplicate_time_window = 10  # dalam detik
 
 # Secret Key untuk API Key
 SECRET_KEY = "MySatnusa"
-API_KEY_EXPIRATION = 86400 
  
 # Helper: Execute query 
 def execute_query(sql_query, params=None, db_alias='default'):
@@ -835,10 +835,10 @@ def validate_request(data, rules):
 def validate_method(
     request,
     required_method,
+    require_api_key=False,
     rate_limit=60,
     time_window=60,
     method_specific=True,
-    require_api_key=False,
     block_bots=True
 ):
     """
@@ -903,27 +903,35 @@ def validate_method(
     # 4. Validasi API Key (Opsional)
     if require_api_key:
         api_key = request.headers.get("X-API-KEY")
-        timestamp = request.headers.get("X-TIMESTAMP")
+        nonce_key = request.headers.get("X-NONCE")
 
-        if not api_key or not timestamp:
-            raise ValueError("Unauthorized: Missing API Key or Timestamp")
+        # Pastikan API key ada
+        if not api_key:
+            raise ValueError("Unauthorized: Missing API Key")
+        
+        # Pastikan API key ada
+        if not nonce_key:
+            raise ValueError("Unauthorized: Missing NONCE Key")
 
-        try:
-            request_time = int(timestamp)
-            current_time = int(time.time())
+        # Pengecekan panjang tepat 5 karakter dan hanya mengizinkan angka dan simbol
+        if len(nonce_key) != 5 or not re.match(r'^[\d\W]{5}$', nonce_key):
+            raise ValueError("Unauthorized: NONCE Key must be exactly 5 characters long and can only contain numbers and symbols.")
 
-            if abs(current_time - request_time) > API_KEY_EXPIRATION:
-                raise ValueError("Unauthorized: Expired or invalid timestamp")
+        # Pengecekan jika semua karakter sama
+        if re.match(r'^(\d|\W)\1{4}$', nonce_key):
+            raise ValueError("Unauthorized: NONCE Key cannot have all characters the same.")
 
-            # Generate API Key untuk bulan ini
-            month_string = datetime.utcfromtimestamp(request_time).strftime("%Y-%m")
-            expected_api_key = generate_monthly_api_key(month_string)
+        # Menentukan periode 6 bulan
+        current_month = datetime.utcnow().month
+        year = datetime.utcnow().year
+        period = f"{year}-{'01' if current_month <= 6 else '07'}"  # Januari-Juni -> periode 01, Juli-Desember -> periode 07
 
-            if not hmac.compare_digest(api_key, expected_api_key):
-                raise ValueError("Unauthorized: Invalid API Key")
+        # Membuat API key yang diharapkan
+        expected_api_key = hmac.new(SECRET_KEY.encode(), period.encode(), hashlib.sha256).hexdigest()
 
-        except ValueError:
-            raise ValueError("Unauthorized: Invalid timestamp format")
+        # Bandingkan API key yang diterima dengan yang diharapkan
+        if api_key != expected_api_key:
+            raise ValueError("Unauthorized: Invalid API Key")
 
     # 5. Blokir User-Agent yang Mencurigakan (Anti Bot & Scraper)
     if block_bots:
@@ -956,10 +964,6 @@ def generate_request_signature(request, endpoint):
     hash_digest = hashlib.sha256(data.encode()).digest()
     return base64.b64encode(hash_digest).decode()
 
-def generate_monthly_api_key(month_string):
-    """Membuat API key berdasarkan bulan"""
-    return hmac.new(SECRET_KEY.encode(), month_string.encode(), hashlib.sha256).hexdigest()
- 
 def log_exception(request, exception):
     try:
         # Parse traceback to get the file and line where the error occurred
