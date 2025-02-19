@@ -903,24 +903,11 @@ def validate_method(
     # 4. Validasi API Key (Opsional)
     if require_api_key:
         api_key = request.headers.get("X-API-KEY")
-        nonce_key = request.headers.get("X-NONCE")
 
         # Pastikan API key ada
         if not api_key:
             raise ValueError("Unauthorized: Missing API Key")
         
-        # Pastikan API key ada
-        if not nonce_key:
-            raise ValueError("Unauthorized: Missing NONCE Key")
-
-        # Pengecekan panjang tepat 5 karakter dan hanya mengizinkan angka dan simbol
-        if len(nonce_key) != 5 or not re.match(r'^[\d\W]{5}$', nonce_key):
-            raise ValueError("Unauthorized: NONCE Key must be exactly 5 characters long and can only contain numbers and symbols.")
-
-        # Pengecekan jika semua karakter sama
-        if re.match(r'^(\d|\W)\1{4}$', nonce_key):
-            raise ValueError("Unauthorized: NONCE Key cannot have all characters the same.")
-
         # Menentukan periode 6 bulan
         current_month = datetime.utcnow().month
         year = datetime.utcnow().year
