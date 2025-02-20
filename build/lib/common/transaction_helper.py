@@ -20,7 +20,6 @@ import base64
 from collections import deque
 import threading
 import hmac
-import binascii
 
 # Global lock untuk sinkronisasi akses ke cache
 cache_lock = threading.Lock()
@@ -1030,58 +1029,38 @@ def validate_file_upload(request):
     if total_size > MAX_TOTAL_SIZE_MB:
         raise ValueError(f"Total file upload size exceeds {MAX_TOTAL_SIZE_MB}MB.")
 
-def is_base64(s):
-    """Cek apakah string berbentuk base64 encoding untuk mendeteksi payload tersembunyi."""
-    try:
-        decoded = base64.b64decode(s, validate=True)
-        return s.strip().endswith("=") or bool(decoded)
-    except (binascii.Error, ValueError):
-        return False
-    
 def contains_malicious_input(data):
-    """Cek apakah payload mengandung karakter berbahaya (XSS, SQL Injection, JS Injection, Base64)."""
+    """Cek apakah payload mengandung karakter berbahaya (XSS, SQL Injection, JS Injection, Encoding)."""
     
-    # Daftar pola berbahaya
+    # **Regex yang lebih kuat untuk mendeteksi berbagai serangan**
     suspicious_patterns = [
-        # XSS Injection
-        r"<script.*?>.*?</script>",                     # <script> tag injection
-        r"on\w+\s*=\s*['\"]?[^'\"]+['\"]?",             # Inline event handlers (onerror, onclick, etc.)
-        r"document\.(cookie|location|write|execCommand)", # Document access
-        r"(javascript|data|vbscript):",                 # JS, data, and VBScript schemes
-        r"eval\(",                                       # eval() function
-        r"setTimeout\(",                                # setTimeout() injection
-        r"setInterval\(",                               # setInterval() injection
-        r"window\.open\(",                             # window.open()
-
-        # SQL Injection
-        r"(?i)\b(union\s+select|drop\s+table|insert\s+into|delete\s+from|alter\s+table|truncate\s+table|update\s+set|exec|xp_cmdshell|concat|load_file|outfile)\b",
-        r"(?i)\b(select.*?from|where.*?=|or\s+1\s*=\s*1|and\s+1\s*=\s*1)\b",
-        r"(--|#|/\*|\*/)",  # SQL comments
-        r"['\"`;]--",  # SQL injection termination
-
-        # JavaScript Injection
-        r"(?i)\b(alert|confirm|prompt|fetch|XMLHttpRequest|console\.log|debugger|Function)\b",
-
-        # Base64 encoded payloads
-        r"(?i)\b([A-Za-z0-9+/]{20,}={0,2})\b",  # Base64 pattern
-
-        # Hexadecimal encoded characters (attempts to bypass filters)
-        r"0x[0-9a-fA-F]+",  
-
-        # URL Encoding Attempt (ex: %3Cscript%3E)
-        r"%[0-9a-fA-F]{2}",  
+        r"(?i)\b(union.*?select|select.*?from|insert.*?into|drop\s+table|update\s+\w+\s+set|delete\s+from)\b",  # SQL Injection
+        r"(?i)\b(or\s+1\s*=\s*1|1\s*=\s*1|exec\s*\(\s*xp_cmdshell|load_file\s*\(|outfile\s*)\b",  # Advanced SQL Injection
+        r"(?i)\b(alert|confirm|prompt|document\.cookie|window\.location|eval\s*\(|setTimeout\s*\(|setInterval\s*\()\b",  # JavaScript Injection
+        r"<\s*script[^>]*>.*?<\s*/\s*script\s*>",  # XSS via `<script>` tag
+        r"onerror\s*=\s*['\"]?javascript:?",  # XSS via `onerror=`
+        r"data:text/html;base64,",  # Base64 encoded HTML
+        r"0x[a-fA-F0-9]+",  # Hexadecimal encoding payload
+        r"(?i)\b(load_file|hex|unhex|char|concat_ws|group_concat)\b"  # SQL function abuse
     ]
+
+    def is_base64(s):
+        """Cek apakah string ini dalam format Base64"""
+        try:
+            return base64.b64encode(base64.b64decode(s)).decode() == s
+        except Exception:
+            return False
 
     for key, value in data.items():
         if isinstance(value, str):
-            # Cek base64 encoding
-            if is_base64(value):
-                return True
-
-            # Cek pola berbahaya
+            # **Cek langsung dengan regex**
             for pattern in suspicious_patterns:
                 if re.search(pattern, value):
-                    return True  # Deteksi input mencurigakan
+                    return True  # 🚨 Deteksi payload berbahaya!
+
+            # **Cek encoding untuk payload yang disembunyikan**
+            if is_base64(value):
+                return True  # 🚨 Deteksi payload encoded dalam Base64!
 
     return False
 
