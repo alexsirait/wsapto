@@ -36,6 +36,13 @@ duplicate_time_window = 10  # dalam detik
 
 # Secret Key untuk API Key
 SECRET_KEY = "MySatnusa"
+
+# Konfigurasi batas ukuran
+MAX_JSON_SIZE_MB = 4
+MAX_FILE_SIZE_MB = 2
+MAX_TOTAL_SIZE_MB = 10
+MAX_FILES_ALLOWED = 5
+ALLOWED_FILE_EXTENSIONS = {"jpg", "jpeg", "png", "gif", "pdf", "txt"}
  
 # Helper: Execute query 
 def execute_query(sql_query, params=None, db_alias='default'):
@@ -862,6 +869,35 @@ def validate_method(
     # 1. Validasi Method
     if method != required_method.upper():
         raise ValueError(f"Method {method} not allowed. Use {required_method}.")
+    
+    # VALIDATE REQUEST [START]
+    # VALIDATE REQUEST [START]
+    # VALIDATE REQUEST [START]
+
+    # 2. Cek apakah Content-Type valid (hanya menerima JSON atau multipart/form-data)
+    content_type = request.headers.get("Content-Type", "")
+    if not any(ct in content_type for ct in ["application/json", "multipart/form-data"]):
+        raise ValueError("Invalid Content-Type. Only application/json or multipart/form-data is allowed.")
+
+    # 3. Batasi ukuran request body
+    max_size_bytes = MAX_TOTAL_SIZE_MB * 1024 * 1024  # 10 MB untuk multipart
+    if request.META.get('CONTENT_LENGTH') and int(request.META.get('CONTENT_LENGTH')) > max_size_bytes:
+        raise ValueError("Payload too large. Maximum allowed size is 10MB.")
+
+    # 4. Validasi header User-Agent
+    user_agent = request.headers.get("User-Agent", "")
+    if not user_agent or len(user_agent) < 10:
+        raise ValueError("Invalid User-Agent. Request seems suspicious.")
+
+    # 5. Validasi request body berdasarkan tipe content
+    if "application/json" in content_type:
+        validate_json_payload(request)
+    elif "multipart/form-data" in content_type:
+        validate_file_upload(request)
+        
+    # VALIDATE REQUEST [END]
+    # VALIDATE REQUEST [END]
+    # VALIDATE REQUEST [END]
 
     # 2. Rate Limiting per Method dan IP berdasarkan endpoint
     with cache_lock:
@@ -950,6 +986,63 @@ def generate_request_signature(request, endpoint):
     )
     hash_digest = hashlib.sha256(data.encode()).digest()
     return base64.b64encode(hash_digest).decode()
+
+def validate_json_payload(request):
+    """Validasi payload JSON dari request."""
+    if request.body:
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            raise ValueError("Invalid JSON format.")
+
+        # Batasi ukuran JSON payload
+        if len(request.body) > (MAX_JSON_SIZE_MB * 1024 * 1024):
+            raise ValueError("JSON payload too large. Maximum allowed size is 4MB.")
+
+        # Deteksi input mencurigakan
+        if contains_malicious_input(data):
+            raise ValueError("Potential hacking detected.")
+
+def validate_file_upload(request):
+    """Validasi file upload dari request multipart/form-data."""
+    files = request.FILES.getlist('file')  # Ambil semua file dari form input `file`
+
+    # Batasi jumlah file yang diunggah
+    if len(files) > MAX_FILES_ALLOWED:
+        raise ValueError(f"Too many files uploaded. Maximum {MAX_FILES_ALLOWED} files are allowed.")
+
+    total_size = 0
+    for uploaded_file in files:
+        file_size_mb = uploaded_file.size / (1024 * 1024)  # Konversi ke MB
+        total_size += file_size_mb
+
+        # Validasi ukuran file
+        if file_size_mb > MAX_FILE_SIZE_MB:
+            raise ValueError(f"File '{uploaded_file.name}' is too large. Maximum allowed size is {MAX_FILE_SIZE_MB}MB.")
+
+        # Validasi ekstensi file
+        file_extension = uploaded_file.name.split(".")[-1].lower()
+        if file_extension not in ALLOWED_FILE_EXTENSIONS:
+            raise ValueError(f"File '{uploaded_file.name}' has an invalid extension. Allowed: {', '.join(ALLOWED_FILE_EXTENSIONS)}.")
+
+    # Batasi total ukuran semua file
+    if total_size > MAX_TOTAL_SIZE_MB:
+        raise ValueError(f"Total file upload size exceeds {MAX_TOTAL_SIZE_MB}MB.")
+
+def contains_malicious_input(data):
+    """Cek apakah payload mengandung karakter berbahaya (XSS, SQL Injection, JS Injection)."""
+    suspicious_patterns = [
+        r"<script.*?>.*?</script>",  # XSS
+        r"(?i)\b(union\s+select|drop\s+table|--|#|/\*|\*/)\b",  # SQL Injection
+        r"(?i)\b(alert|confirm|prompt|document\.cookie)\b",  # JavaScript Injection
+    ]
+    
+    for key, value in data.items():
+        if isinstance(value, str):
+            for pattern in suspicious_patterns:
+                if re.search(pattern, value):
+                    return True  # Deteksi input mencurigakan
+    return False
 
 def log_exception(request, exception):
     try:
