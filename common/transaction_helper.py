@@ -1030,38 +1030,18 @@ def validate_file_upload(request):
         raise ValueError(f"Total file upload size exceeds {MAX_TOTAL_SIZE_MB}MB.")
 
 def contains_malicious_input(data):
-    """Cek apakah payload mengandung karakter berbahaya (XSS, SQL Injection, JS Injection, Encoding)."""
-    
-    # **Regex yang lebih kuat untuk mendeteksi berbagai serangan**
+    """Cek apakah payload mengandung karakter berbahaya (XSS, SQL Injection, JS Injection)."""
     suspicious_patterns = [
-        r"(?i)\b(union.*?select|select.*?from|insert.*?into|drop\s+table|update\s+\w+\s+set|delete\s+from)\b",  # SQL Injection
-        r"(?i)\b(or\s+1\s*=\s*1|1\s*=\s*1|exec\s*\(\s*xp_cmdshell|load_file\s*\(|outfile\s*)\b",  # Advanced SQL Injection
-        r"(?i)\b(alert|confirm|prompt|document\.cookie|window\.location|eval\s*\(|setTimeout\s*\(|setInterval\s*\()\b",  # JavaScript Injection
-        r"<\s*script[^>]*>.*?<\s*/\s*script\s*>",  # XSS via `<script>` tag
-        r"onerror\s*=\s*['\"]?javascript:?",  # XSS via `onerror=`
-        r"data:text/html;base64,",  # Base64 encoded HTML
-        r"0x[a-fA-F0-9]+",  # Hexadecimal encoding payload
-        r"(?i)\b(load_file|hex|unhex|char|concat_ws|group_concat)\b"  # SQL function abuse
+        r"<script.*?>.*?</script>",  # XSS
+        r"(?i)\b(union\s+select|drop\s+table|--|#|/\*|\*/)\b",  # SQL Injection
+        r"(?i)\b(alert|confirm|prompt|document\.cookie)\b",  # JavaScript Injection
     ]
-
-    def is_base64(s):
-        """Cek apakah string ini dalam format Base64"""
-        try:
-            return base64.b64encode(base64.b64decode(s)).decode() == s
-        except Exception:
-            return False
-
+    
     for key, value in data.items():
         if isinstance(value, str):
-            # **Cek langsung dengan regex**
             for pattern in suspicious_patterns:
                 if re.search(pattern, value):
-                    return True  # 🚨 Deteksi payload berbahaya!
-
-            # **Cek encoding untuk payload yang disembunyikan**
-            if is_base64(value):
-                return True  # 🚨 Deteksi payload encoded dalam Base64!
-
+                    return True  # Deteksi input mencurigakan
     return False
 
 def log_exception(request, exception):
