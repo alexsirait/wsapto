@@ -1030,17 +1030,41 @@ def validate_file_upload(request):
         raise ValueError(f"Total file upload size exceeds {MAX_TOTAL_SIZE_MB}MB.")
 
 def contains_malicious_input(data):
-    """Cek apakah payload mengandung karakter berbahaya (XSS, SQL Injection, JS Injection)."""
+    """Cek apakah payload mengandung karakter berbahaya (XSS, SQL Injection, JS Injection, encoding eksploitasi, dan serangan lainnya)."""
     suspicious_patterns = [
-        r"<script.*?>.*?</script>",  # XSS
-        r"(?i)\b(union\s+select|drop\s+table|--|#|/\*|\*/)\b",  # SQL Injection
-        r"(?i)\b(alert|confirm|prompt|document\.cookie)\b",  # JavaScript Injection
+        # XSS Injection
+        r"<script.*?>.*?</script>",
+        r"(?i)\b(on\w+=['\"].*?['\"])",
+        r"(?i)<iframe.*?>.*?</iframe>",
+        r"(?i)<meta.*?http-equiv=['\"]refresh['\"].*?>",
+        r"(?i)<img.*?src=['\"]javascript:.*?['\"]>",
+        
+        # SQL Injection
+        r"(?i)\b(union\s+select|drop\s+table|--|#|/\*|\*/|;|xp_cmdshell|exec\s+xp_)\b",
+        r"(?i)\b(select\s+.*?from|insert\s+into|update\s+.*?set|delete\s+from)\b",
+        r"(?i)\b(load_file|outfile|dumpfile|sleep\(\d+\)|benchmark\(\d+,\d+\))\b",
+        
+        # JavaScript Injection
+        r"(?i)\b(alert|confirm|prompt|document\.cookie|eval|setTimeout|setInterval|Function|fetch|XMLHttpRequest|webkitRequestFileSystem)\b",
+        r"(?i)\b(navigator\.userAgent|window\.location|history\.go|localStorage|sessionStorage)\b",
+        
+        # Dangerous Encodings & URI Schemes
+        r"%3Cscript%3E|%3Ciframe%3E|%3Cimg%20src|%3Cbody%20onload|%3Conerror=",
+        r"(?i)\b(data:text/html|javascript:|vbscript:|mocha:|livescript:|file://)\b",
+        
+        # NoSQL Injection & Command Injection
+        r"(?i)\b(\$ne|\$eq|\$gte|\$lte|\$regex|\$where)\b",  # MongoDB NoSQL injection
+        r"(?i)\b(cat\s+/etc/passwd|ls\s+-la|whoami|id|uname\s+-a|rm\s+-rf|chmod\s+777)\b",  # Command injection
+        
+        # Path Traversal Attack
+        r"(?i)\b(\.\.\/|\.\.\\|/etc/passwd|c:\\windows\\system32)\b",
     ]
     
     for key, value in data.items():
         if isinstance(value, str):
+            sanitized_value = value.strip()
             for pattern in suspicious_patterns:
-                if re.search(pattern, value):
+                if re.search(pattern, sanitized_value):
                     return True  # Deteksi input mencurigakan
     return False
 
