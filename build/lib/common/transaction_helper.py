@@ -1004,8 +1004,12 @@ def validate_json_payload(request):
             raise ValueError("Potential hacking detected.")
 
 def validate_file_upload(request):
-    """Validasi file upload dari request multipart/form-data."""
-    files = request.FILES.getlist('file')  # Ambil semua file dari form input `file`
+    """Validasi file upload dari request multipart/form-data dengan nama field yang dinamis."""
+
+    # Ambil semua file dari request, tanpa peduli nama field
+    files = []
+    for key in request.FILES:
+        files.extend(request.FILES.getlist(key))
 
     # Batasi jumlah file yang diunggah
     if len(files) > MAX_FILES_ALLOWED:
