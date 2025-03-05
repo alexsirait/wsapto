@@ -20,6 +20,9 @@ import base64
 from collections import deque
 import threading
 import hmac
+from typing import Any
+from typing import Optional
+import mimetypes
 
 # Global lock untuk sinkronisasi akses ke cache
 cache_lock = threading.Lock()
@@ -42,7 +45,28 @@ MAX_JSON_SIZE_MB = 4
 MAX_FILE_SIZE_MB = 2
 MAX_TOTAL_SIZE_MB = 10
 MAX_FILES_ALLOWED = 5
-ALLOWED_FILE_EXTENSIONS = {"jpg", "jpeg", "png", "gif", "pdf", "txt"}
+ALLOWED_FILE_EXTENSIONS = {"jpg", "jpeg", "png", "pdf", "txt"}
+ALLOWED_MIME_TYPES = {
+    "jpg": "image/jpeg",
+    "png": "image/png",
+    "pdf": "application/pdf",
+    "txt": "text/plain"
+}
+# Daftar User-Agent yang dikenal sebagai bot sah (opsional)
+ALLOWED_BOTS = {
+    "Googlebot": "Googlebot",
+    "Bingbot": "bingbot",
+    "YandexBot": "YandexBot",
+    # Tambahkan bot lain yang diizinkan sesuai kebutuhan
+}
+
+# Daftar pola User-Agent mencurigakan
+SUSPICIOUS_UA_PATTERNS = [
+    r"(?i)\b(bot|crawl|spider|slurp|http|scrap|curl|wget|python-requests|java|node|phantomjs)\b",  # Bot/scraper umum
+    r"(?i)\b(headless|automation|test|fake|unknown)\b",  # Indikator headless atau tes
+    r"^[0-9]+$",  # User-Agent hanya angka (sangat tidak wajar)
+    r"^\s*$",  # Kosong atau hanya whitespace
+]
  
 # Helper: Execute query 
 def execute_query(sql_query, params=None, db_alias='default'):
@@ -885,9 +909,7 @@ def validate_method(
         raise ValueError("Payload too large. Maximum allowed size is 10MB.")
 
     # 4. Validasi header User-Agent
-    user_agent = request.headers.get("User-Agent", "")
-    if not user_agent or len(user_agent) < 10:
-        raise ValueError("Invalid User-Agent. Request seems suspicious.")
+    validate_user_agent(request)
 
     # 5. Validasi request body berdasarkan tipe content
     if "application/json" in content_type:
@@ -926,7 +948,7 @@ def validate_method(
             ip_cache.append(now)
 
     # 3. Duplicate Request Limiting
-    request_signature = generate_request_signature(request, endpoint)
+    # request_signature = generate_request_signature(request, endpoint)
     with cache_lock:
         endpoint_signatures = REQUEST_SIGNATURES.setdefault(endpoint, {})
         ip_signatures = endpoint_signatures.setdefault(client_ip, deque(maxlen=duplicate_limit))
@@ -987,40 +1009,48 @@ def generate_request_signature(request, endpoint):
     hash_digest = hashlib.sha256(data.encode()).digest()
     return base64.b64encode(hash_digest).decode()
 
+# Fungsi untuk memvalidasi payload JSON
 def validate_json_payload(request):
     """Validasi payload JSON dari request."""
+
     if request.body:
         try:
             data = json.loads(request.body)
         except json.JSONDecodeError:
             raise ValueError("Invalid JSON format.")
+        except Exception:
+            raise ValueError("Invalid request payload.")
 
         # Batasi ukuran JSON payload
         if len(request.body) > (MAX_JSON_SIZE_MB * 1024 * 1024):
-            raise ValueError("JSON payload too large. Maximum allowed size is 4MB.")
+            raise ValueError(f"JSON payload too large. Maximum allowed size is {MAX_JSON_SIZE_MB}MB.")
 
-        # Deteksi input mencurigakan
+        # Deteksi input mencurigakan secara rekursif
         if contains_malicious_input(data):
             raise ValueError("Potential hacking detected.")
 
 def validate_file_upload(request):
-    """Validasi file upload dari request multipart/form-data dengan nama field yang dinamis."""
+    """Validasi file upload dan field formulir dari request multipart/form-data."""
 
-    # Ambil semua file dari request, tanpa peduli nama field
+    # 1. Validasi field formulir (request.POST)
+    form_data = request.POST
+    if contains_malicious_input(form_data):
+        raise ValueError("Potential hacking detected in form fields.")
+
+    # 2. Validasi file yang diunggah
     files = []
     for key in request.FILES:
         files.extend(request.FILES.getlist(key))
 
-    # Batasi jumlah file yang diunggah
     if len(files) > MAX_FILES_ALLOWED:
         raise ValueError(f"Too many files uploaded. Maximum {MAX_FILES_ALLOWED} files are allowed.")
 
     total_size = 0
     for uploaded_file in files:
-        file_size_mb = uploaded_file.size / (1024 * 1024)  # Konversi ke MB
+        file_size_mb = uploaded_file.size / (1024 * 1024)
         total_size += file_size_mb
 
-        # Validasi ukuran file
+        # Validasi ukuran per file
         if file_size_mb > MAX_FILE_SIZE_MB:
             raise ValueError(f"File '{uploaded_file.name}' is too large. Maximum allowed size is {MAX_FILE_SIZE_MB}MB.")
 
@@ -1029,48 +1059,113 @@ def validate_file_upload(request):
         if file_extension not in ALLOWED_FILE_EXTENSIONS:
             raise ValueError(f"File '{uploaded_file.name}' has an invalid extension. Allowed: {', '.join(ALLOWED_FILE_EXTENSIONS)}.")
 
-    # Batasi total ukuran semua file
+        # Validasi MIME type menggunakan mimetypes
+        mime_type, _ = mimetypes.guess_type(uploaded_file.name, strict=True)
+        expected_mime = ALLOWED_MIME_TYPES.get(file_extension)
+        if mime_type != expected_mime:
+            raise ValueError(f"File '{uploaded_file.name}' has an invalid MIME type: {mime_type or 'unknown'}. Expected: {expected_mime}.")
+
+        # Validasi isi file untuk file teks (opsional)
+        if file_extension == "txt":
+            try:
+                file_content = uploaded_file.read().decode("utf-8")
+                if contains_malicious_input(file_content):
+                    raise ValueError(f"File '{uploaded_file.name}' contains potentially malicious content.")
+            except UnicodeDecodeError:
+                raise ValueError(f"File '{uploaded_file.name}' is not a valid text file.")
+            finally:
+                uploaded_file.seek(0)  # Reset pointer
+
+    # Validasi total ukuran
     if total_size > MAX_TOTAL_SIZE_MB:
         raise ValueError(f"Total file upload size exceeds {MAX_TOTAL_SIZE_MB}MB.")
 
-def contains_malicious_input(data):
-    """Cek apakah payload mengandung karakter berbahaya (XSS, SQL Injection, JS Injection, encoding eksploitasi, dan serangan lainnya)."""
-    suspicious_patterns = [
-        # XSS Injection
-        r"<script.*?>.*?</script>",
-        r"(?i)\b(on\w+=['\"].*?['\"])",
-        r"(?i)<iframe.*?>.*?</iframe>",
-        r"(?i)<meta.*?http-equiv=['\"]refresh['\"].*?>",
-        r"(?i)<img.*?src=['\"]javascript:.*?['\"]>",
-        
-        # SQL Injection
-        r"(?i)\b(union\s+select|drop\s+table|--|#|/\*|\*/|;|xp_cmdshell|exec\s+xp_)\b",
-        r"(?i)\b(select\s+.*?from|insert\s+into|update\s+.*?set|delete\s+from)\b",
-        r"(?i)\b(load_file|outfile|dumpfile|sleep\(\d+\)|benchmark\(\d+,\d+\))\b",
-        
-        # JavaScript Injection
-        r"(?i)\b(alert|confirm|prompt|document\.cookie|eval|setTimeout|setInterval|Function|fetch|XMLHttpRequest|webkitRequestFileSystem)\b",
-        r"(?i)\b(navigator\.userAgent|window\.location|history\.go|localStorage|sessionStorage)\b",
-        
-        # Dangerous Encodings & URI Schemes
-        r"%3Cscript%3E|%3Ciframe%3E|%3Cimg%20src|%3Cbody%20onload|%3Conerror=",
-        r"(?i)\b(data:text/html|javascript:|vbscript:|mocha:|livescript:|file://)\b",
-        
-        # NoSQL Injection & Command Injection
-        r"(?i)\b(\$ne|\$eq|\$gte|\$lte|\$regex|\$where)\b",  # MongoDB NoSQL injection
-        r"(?i)\b(cat\s+/etc/passwd|ls\s+-la|whoami|id|uname\s+-a|rm\s+-rf|chmod\s+777)\b",  # Command injection
-        
-        # Path Traversal Attack
-        r"(?i)\b(\.\.\/|\.\.\\|/etc/passwd|c:\\windows\\system32)\b",
-    ]
+# Daftar pola berbahaya (dari kode Anda sebelumnya)
+suspicious_patterns = [
+    # XSS Injection
+    r"<script.*?>.*?</script>",
+    r"(?i)\b(on\w+=['\"].*?['\"])",
+    r"(?i)<iframe.*?>.*?</iframe>",
+    r"(?i)<meta.*?http-equiv=['\"]refresh['\"].*?>",
+    r"(?i)<img.*?src=['\"]javascript:.*?['\"]>",
     
-    for key, value in data.items():
-        if isinstance(value, str):
-            sanitized_value = value.strip()
-            for pattern in suspicious_patterns:
-                if re.search(pattern, sanitized_value):
-                    return True  # Deteksi input mencurigakan
+    # SQL Injection
+    r"(?i)\b(union\s+select|drop\s+table|--|#|/\*|\*/|;|xp_cmdshell|exec\s+xp_)\b",
+    r"(?i)\b(select\s+.*?from|insert\s+into|update\s+.*?set|delete\s+from)\b",
+    r"(?i)\b(load_file|outfile|dumpfile|sleep\(\d+\)|benchmark\(\d+,\d+\))\b",
+    
+    # JavaScript Injection
+    r"(?i)\b(alert|confirm|prompt|document\.cookie|eval|setTimeout|setInterval|Function|fetch|XMLHttpRequest|webkitRequestFileSystem)\b",
+    r"(?i)\b(navigator\.userAgent|window\.location|history\.go|localStorage|sessionStorage)\b",
+    
+    # Dangerous Encodings & URI Schemes
+    r"%3Cscript%3E|%3Ciframe%3E|%3Cimg%20src|%3Cbody%20onload|%3Conerror=",
+    r"(?i)\b(data:text/html|javascript:|vbscript:|mocha:|livescript:|file://)\b",
+    
+    # NoSQL Injection & Command Injection
+    r"(?i)\b(\$ne|\$eq|\$gte|\$lte|\$regex|\$where)\b",  # MongoDB NoSQL injection
+    r"(?i)\b(cat\s+/etc/passwd|ls\s+-la|whoami|id|uname\s+-a|rm\s+-rf|chmod\s+777)\b",  # Command injection
+    
+    # Path Traversal Attack
+    r"(?i)\b(\.\.\/|\.\.\\|/etc/passwd|c:\\windows\\system32)\b",
+]
+
+# Fungsi rekursif untuk memeriksa input berbahaya
+def contains_malicious_input(data: Any) -> bool:
+    """
+    Cek apakah payload mengandung karakter berbahaya secara rekursif.
+    Args:
+        data: Data yang akan diperiksa (bisa dict, list, atau str).
+    Returns:
+        bool: True jika ada input berbahaya, False jika aman.
+    """
+    if isinstance(data, dict):
+        return any(contains_malicious_input(value) for value in data.values())
+    elif isinstance(data, list):
+        return any(contains_malicious_input(item) for item in data)
+    elif isinstance(data, str):
+        sanitized_value = data.strip()
+        for pattern in suspicious_patterns:
+            if re.search(pattern, sanitized_value):
+                return True
     return False
+
+def validate_user_agent(request) -> None:
+    """
+    Validasi header User-Agent untuk mendeteksi permintaan mencurigakan.
+    Args:
+        request: Request object Django.
+    Raises:
+        ValueError: Jika User-Agent mencurigakan atau tidak valid.
+    """
+    user_agent: str = request.headers.get("User-Agent", "").strip()
+    
+    # 1. Cek apakah User-Agent ada dan memiliki panjang minimal
+    if not user_agent:
+        raise ValueError("Missing User-Agent. Request seems suspicious.")
+    if len(user_agent) < 10:
+        # Izinkan pengecualian untuk bot yang sah jika diperlukan
+        if not any(bot.lower() in user_agent.lower() for bot in ALLOWED_BOTS.values()):
+            raise ValueError(f"User-Agent too short ({len(user_agent)} chars). Request seems suspicious.")
+
+    # 2. Cek pola User-Agent mencurigakan
+    for pattern in SUSPICIOUS_UA_PATTERNS:
+        if re.search(pattern, user_agent):
+            # Izinkan bot yang dikenal (opsional)
+            if any(bot.lower() in user_agent.lower() for bot in ALLOWED_BOTS.values()):
+                return  # Bot sah, lanjutkan
+            raise ValueError(f"Suspicious User-Agent detected: {user_agent}")
+
+    # 3. Cek apakah User-Agent terlalu generik atau tidak wajar
+    if user_agent.lower() in ["mozilla", "browser", "default", "user-agent"]:
+        raise ValueError("Generic User-Agent detected. Request seems suspicious.")
+
+    # 4. (Opsional) Cek header tambahan untuk konsistensi
+    accept_header = request.headers.get("Accept", "")
+    if not accept_header and "html" not in accept_header.lower():
+        # Jika tidak ada Accept header atau tidak menerima HTML, kemungkinan bukan browser
+        if not any(bot.lower() in user_agent.lower() for bot in ALLOWED_BOTS.values()):
+            raise ValueError("Inconsistent headers with User-Agent. Request seems suspicious.")
 
 def log_exception(request, exception):
     try:
