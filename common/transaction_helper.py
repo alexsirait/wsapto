@@ -1083,31 +1083,32 @@ def validate_file_upload(request):
 # Daftar pola berbahaya (dari kode Anda sebelumnya)
 suspicious_patterns = [
     # XSS Injection
-    r"<script.*?>.*?</script>",
-    r"(?i)\b(on\w+=['\"].*?['\"])",
-    r"(?i)<iframe.*?>.*?</iframe>",
-    r"(?i)<meta.*?http-equiv=['\"]refresh['\"].*?>",
-    r"(?i)<img.*?src=['\"]javascript:.*?['\"]>",
+    r"<script\b[^>]*>.*?</script>",  # Hanya deteksi <script> dengan konten berbahaya
+    r"(?i)\b(on\w+=['\"][^'\"]*['\"])",  # Event handler seperti onload, onclick
+    r"(?i)<iframe\b[^>]*src=['\"][^'\"]*['\"][^>]*>.*?</iframe>",  # Iframe dengan src mencurigakan
+    r"(?i)<meta\b[^>]*http-equiv=['\"]refresh['\"][^>]*content=['\"][^'\"]*['\"][^>]*>",  # Meta refresh redirect
+    r"(?i)<img\b[^>]*src=['\"]javascript:[^'\"]*['\"][^>]*>",  # Img dengan javascript: URI
     
     # SQL Injection
-    r"(?i)\b(union\s+select|drop\s+table|--|#|/\*|\*/|;|xp_cmdshell|exec\s+xp_)\b",
-    r"(?i)\b(select\s+.*?from|insert\s+into|update\s+.*?set|delete\s+from)\b",
-    r"(?i)\b(load_file|outfile|dumpfile|sleep\(\d+\)|benchmark\(\d+,\d+\))\b",
+    r"(?i)\b(union\s+select|drop\s+table|--\s|#|/\*|\*/|;\s*xp_cmdshell|exec\s+xp_)\b",  # Perintah SQL berbahaya
+    r"(?i)\b(select\s+.*?from|insert\s+into|update\s+.*?set|delete\s+from)\s*['\";]",  # Query SQL dengan tanda berbahaya
+    r"(?i)\b(load_file|outfile|dumpfile|sleep\(\d+\)|benchmark\(\d+,\d+\))\b",  # Fungsi SQL berbahaya
     
     # JavaScript Injection
-    r"(?i)\b(alert|confirm|prompt|document\.cookie|eval|setTimeout|setInterval|Function|fetch|XMLHttpRequest|webkitRequestFileSystem)\b",
-    r"(?i)\b(navigator\.userAgent|window\.location|history\.go|localStorage|sessionStorage)\b",
+    r"(?i)\b(alert|confirm|prompt|document\.cookie|eval|setTimeout|setInterval|Function)\s*\(",  # Fungsi JS berbahaya dengan pemanggilan
+    r"(?i)\b(fetch|XMLHttpRequest|webkitRequestFileSystem)\s*\(",  # API berbahaya dengan pemanggilan
+    r"(?i)\b(window\.location|history\.go|localStorage|sessionStorage)\s*[=\.]",  # Manipulasi browser
     
     # Dangerous Encodings & URI Schemes
-    r"%3Cscript%3E|%3Ciframe%3E|%3Cimg%20src|%3Cbody%20onload|%3Conerror=",
-    r"(?i)\b(data:text/html|javascript:|vbscript:|mocha:|livescript:|file://)\b",
+    r"(?i)%3Cscript%3E|%3Ciframe%3E|%3Cimg%20src=['\"]javascript:|%3Cbody%20onload|%3Conerror=",  # Encoded attacks
+    r"(?i)\b(data:text/html|javascript:|vbscript:|mocha:|livescript:|file://)\b",  # URI berbahaya
     
     # NoSQL Injection & Command Injection
-    r"(?i)\b(\$ne|\$eq|\$gte|\$lte|\$regex|\$where)\b",  # MongoDB NoSQL injection
-    r"(?i)\b(cat\s+/etc/passwd|ls\s+-la|whoami|id|uname\s+-a|rm\s+-rf|chmod\s+777)\b",  # Command injection
+    r"(?i)\b(\$ne|\$eq|\$gte|\$lte|\$regex|\$where)\s*[:=]",  # MongoDB operator mencurigakan
+    r"(?i)\b(cat\s+/etc/passwd|ls\s+-la|whoami|id|uname\s+-a|rm\s+-rf|chmod\s+777)\b",  # Perintah sistem
     
     # Path Traversal Attack
-    r"(?i)\b(\.\.\/|\.\.\\|/etc/passwd|c:\\windows\\system32)\b",
+    r"(?i)\b(\.\./|\.\.\\|/etc/passwd|c:\\windows\\system32)\b",  # Path traversal
 ]
 
 # Fungsi rekursif untuk memeriksa input berbahaya
