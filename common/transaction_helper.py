@@ -1090,7 +1090,7 @@ suspicious_patterns = [
     r"(?i)<img\b[^>]*src=['\"]javascript:[^'\"]*['\"][^>]*>",  # Img dengan javascript: URI
     
     # SQL Injection
-    r"(?i)\b(union\s+select|drop\s+table|--\s|#|/\*|\*/|;\s*xp_cmdshell|exec\s+xp_)\b",  # Perintah SQL berbahaya
+    r"(?i)\b(union\s+select|drop\s+table|--\s+|/\*|\*/|;\s*xp_cmdshell|exec\s+xp_)\b|#(?=\s*(select|insert|update|delete|drop))",  # Perintah SQL berbahaya
     r"(?i)\b(select\s+.*?from|insert\s+into|update\s+.*?set|delete\s+from)\s*['\";]",  # Query SQL dengan tanda berbahaya
     r"(?i)\b(load_file|outfile|dumpfile|sleep\(\d+\)|benchmark\(\d+,\d+\))\b",  # Fungsi SQL berbahaya
     
