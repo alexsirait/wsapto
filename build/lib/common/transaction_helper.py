@@ -964,7 +964,7 @@ def validate_method(
 
         # Pastikan API key ada
         if not api_key:
-            raise ValueError("Unauthorized: Missing API Key")
+            raise ValueError("401 Unauthorized: Missing API Key")
         
         # Menentukan periode 6 bulan
         current_month = datetime.utcnow().month
@@ -1435,3 +1435,4 @@ def generate_excel_from_template(data, url=None, output_file_name="dashboard_rep
  
     except Exception as e:
         raise Exception(f"Error saving Excel file: {e}")
+    
