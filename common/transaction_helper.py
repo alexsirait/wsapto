@@ -23,6 +23,7 @@ import hmac
 from typing import Any
 from typing import Optional
 import mimetypes
+from urllib.parse import urlencode
 
 # Global lock untuk sinkronisasi akses ke cache
 cache_lock = threading.Lock()
@@ -1436,3 +1437,100 @@ def generate_excel_from_template(data, url=None, output_file_name="dashboard_rep
     except Exception as e:
         raise Exception(f"Error saving Excel file: {e}")
     
+def execute_query_with_pagination(
+    request,
+    sql_query: str,
+    params: list = None,
+    db_alias: str = 'default',
+    default_page: int = 1,
+    default_per_page: int = 10,
+    order_by: str = None
+) -> dict:
+    """
+    Executes a raw SQL query with pagination on the specified database and returns paginated results.
+ 
+    Args:
+        request: HttpRequest object to get pagination parameters and build URLs.
+        sql_query: The base SQL query to execute.
+        params: List of parameters to safely pass to the query.
+        db_alias: The alias of the database to use.
+        default_page: Default page number if not specified in request.
+        default_per_page: Default items per page if not specified in request.
+        order_by: Optional ORDER BY clause for sorting results.
+ 
+    Returns:
+        dict: A dictionary containing paginated data and metadata:
+            - rows: List of result rows
+            - current_page: Current page number
+            - page_size: Items per page
+            - total_pages: Total number of pages
+            - total_rows: Total number of rows
+            - last_page: Last page number
+            - next_page_url: URL for next page (or None)
+            - prev_page_url: URL for previous page (or None)
+    """
+    try:
+        # Initialize variables
+        params = params or []
+        pagination = {}
+        
+        # Get pagination parameters from request
+        try:
+            page = int(request.GET.get("current_page", default_page))
+            per_page = int(request.GET.get("page_size", default_per_page))
+        except ValueError:
+            page = default_page
+            per_page = default_per_page
+        
+        offset = (page - 1) * per_page
+        
+        # Count total rows using execute_query
+        count_query = f"SELECT COUNT(*) as total FROM ({sql_query}) AS total_data"
+        total_rows = execute_query(count_query, params, db_alias)[0]["total"]
+        
+        # Calculate pagination metadata
+        total_pages = (total_rows + per_page - 1) // per_page
+        last_page = total_pages
+        
+        # Prepare paginated query
+        paginated_params = params.copy()
+        paginated_query = sql_query
+        if order_by:
+            paginated_query += f" {order_by}"
+        paginated_query += " LIMIT %s OFFSET %s"
+        paginated_params.extend([per_page, offset])
+        
+        # Execute paginated query using execute_query
+        data = execute_query(paginated_query, paginated_params, db_alias)
+        
+        # Build pagination URLs
+        base_url = request.build_absolute_uri(request.path)
+        query_params = request.GET.copy()
+        
+        next_page_url = None
+        prev_page_url = None
+        
+        if page < total_pages:
+            query_params['current_page'] = str(page + 1)
+            next_page_url = f"{base_url}?{urlencode(query_params)}"
+        
+        if page > 1:
+            query_params['current_page'] = str(page - 1)
+            prev_page_url = f"{base_url}?{urlencode(query_params)}"
+        
+        # Construct response
+        pagination = {
+            "current_page": page,
+            "page_size": per_page,
+            "total_pages": total_pages,
+            "total_rows": total_rows,
+            "last_page": last_page,
+            "next_page_url": next_page_url,
+            "prev_page_url": prev_page_url,
+            "rows": data,
+        }
+        
+        return pagination
+    
+    except Exception as e:
+        raise Exception(f"Error executing paginated query on database '{db_alias}': {e}")
