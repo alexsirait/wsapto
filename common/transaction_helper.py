@@ -1534,3 +1534,164 @@ def execute_query_with_pagination(
     
     except Exception as e:
         raise Exception(f"Error executing paginated query on database '{db_alias}': {e}")
+    
+def get_data_with_pagination(
+    request,
+    table_name: str,
+    filters: dict = None,
+    search: str = None,
+    search_columns: list = None,
+    columns: str | list = '*',
+    order_by: str | list = None,
+    db_alias: str = 'default',
+    default_page: int = 1,
+    default_per_page: int = 10
+) -> dict:
+    """
+    Helper to read data from a table with pagination, supporting various operators like !=, IN, NOT IN, and NULL handling.
+ 
+    Args:
+        request: HttpRequest object to get pagination parameters and build URLs.
+        table_name: The name of the table.
+        filters: Conditions to filter data.
+        search: Search keyword.
+        search_columns: Columns to perform search on.
+        columns: Columns to select, default is '*'.
+        order_by: Column(s) to order by.
+        db_alias: The database alias to use (default is 'default').
+        default_page: Default page number if not specified in request.
+        default_per_page: Default items per page if not specified in request.
+ 
+    Returns:
+        dict: A dictionary containing paginated data and metadata:
+            - rows: List of result rows
+            - current_page: Current page number
+            - page_size: Items per page
+            - total_pages: Total number of pages
+            - total_rows: Total number of rows
+            - last_page: Last page number
+            - next_page_url: URL for next page (or None)
+            - prev_page_url: URL for previous page (or None)
+    """
+    try:
+        # Initialize variables
+        pagination = {}
+        values = []
+        conditions = []
+        
+        # Get pagination parameters from request
+        try:
+            page = int(request.GET.get("current_page", default_page))
+            per_page = int(request.GET.get("page_size", default_per_page))
+        except ValueError:
+            page = default_page
+            per_page = default_per_page
+        
+        offset = (page - 1) * per_page
+        
+        # Build base query
+        if isinstance(columns, list):
+            columns = ', '.join(columns)
+        sql_query = f"SELECT {columns} FROM {table_name}"
+        
+        # Add filters
+        if filters:
+            for key, value in filters.items():
+                if "__ne" in key:
+                    column = key.replace("__ne", "")
+                    if value is None:
+                        conditions.append(f"{column} IS NOT NULL")
+                    else:
+                        conditions.append(f"{column} <> %s")
+                        values.append(value)
+                elif "__in" in key:
+                    column = key.replace("__in", "")
+                    if isinstance(value, (list, tuple)):
+                        conditions.append(f"{column} IN ({', '.join(['%s'] * len(value))})")
+                        values.extend(value)
+                    else:
+                        conditions.append(f"{column} = %s")
+                        values.append(value)
+                elif "__not_in" in key:
+                    column = key.replace("__not_in", "")
+                    if isinstance(value, (list, tuple)):
+                        conditions.append(f"{column} NOT IN ({', '.join(['%s'] * len(value))})")
+                        values.extend(value)
+                    else:
+                        conditions.append(f"{column} <> %s")
+                        values.append(value)
+                else:
+                    if value is None:
+                        conditions.append(f"{key} IS NULL")
+                    else:
+                        conditions.append(f"{key} = %s")
+                        values.append(value)
+        
+        # Add search conditions
+        if search and search_columns:
+            search_conditions = [f"{col}::text ILIKE %s" for col in search_columns]
+            conditions.append(f"({' OR '.join(search_conditions)})")
+            values += [f"%{search}%"] * len(search_columns)
+        
+        # Combine conditions for count query
+        count_query = f"SELECT COUNT(*) as total FROM {table_name}"
+        if conditions:
+            count_query += ' WHERE ' + ' AND '.join(conditions)
+        
+        # Execute count query
+        total_rows = get_data(table_name, filters, search, search_columns, columns=['COUNT(*) as total'], db_alias=db_alias)[0]["total"]
+        
+        # Calculate pagination metadata
+        total_pages = (total_rows + per_page - 1) // per_page
+        last_page = total_pages
+        
+        # Add conditions to main query
+        if conditions:
+            sql_query += ' WHERE ' + ' AND '.join(conditions)
+        
+        # Add ORDER BY clause
+        if order_by:
+            if isinstance(order_by, list):
+                order_by_clause = ', '.join(order_by)
+            else:
+                order_by_clause = order_by
+            sql_query += f" ORDER BY {order_by_clause}"
+        
+        # Add pagination
+        sql_query += f" LIMIT %s OFFSET %s"
+        values.extend([per_page, offset])
+        
+        # Execute paginated query
+        data = get_data(table_name, filters, search, search_columns, columns, limit=per_page, offset=offset, order_by=order_by, db_alias=db_alias)
+        
+        # Build pagination URLs
+        base_url = request.build_absolute_uri(request.path)
+        query_params = request.GET.copy()
+        
+        next_page_url = None
+        prev_page_url = None
+        
+        if page < total_pages:
+            query_params['current_page'] = str(page + 1)
+            next_page_url = f"{base_url}?{urlencode(query_params)}"
+        
+        if page > 1:
+            query_params['current_page'] = str(page - 1)
+            prev_page_url = f"{base_url}?{urlencode(query_params)}"
+        
+        # Construct response
+        pagination = {
+            "current_page": page,
+            "page_size": per_page,
+            "total_pages": total_pages,
+            "total_rows": total_rows,
+            "last_page": last_page,
+            "next_page_url": next_page_url,
+            "prev_page_url": prev_page_url,
+            "rows": data,
+        }
+        
+        return pagination
+    
+    except Exception as e:
+        raise Exception(f"Error in read with pagination from database '{db_alias}': {e}")
