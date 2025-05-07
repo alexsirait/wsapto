@@ -1439,12 +1439,12 @@ def generate_excel_from_template(data, url=None, output_file_name="dashboard_rep
     
 def execute_query_with_pagination(
     request,
-    sql_query: str,
-    params: list = None,
-    db_alias: str = 'default',
-    default_page: int = 1,
-    default_per_page: int = 10,
-    order_by: str = None
+    sql_query,
+    params = None,
+    db_alias = 'default',
+    default_page = 1,
+    default_per_page = 10,
+    order_by = None
 ) -> dict:
     """
     Executes a raw SQL query with pagination on the specified database and returns paginated results.
@@ -1537,15 +1537,15 @@ def execute_query_with_pagination(
     
 def get_data_with_pagination(
     request,
-    table_name: str,
-    filters: dict = None,
-    search: str = None,
-    search_columns: list = None,
-    columns: str | list = '*',
-    order_by: str | list = None,
-    db_alias: str = 'default',
-    default_page: int = 1,
-    default_per_page: int = 10
+    table_name,
+    filters = None,
+    search = None,
+    search_columns = None,
+    columns = '*',
+    order_by = None,
+    db_alias = 'default',
+    default_page = 1,
+    default_per_page = 10
 ) -> dict:
     """
     Helper to read data from a table with pagination, supporting various operators like !=, IN, NOT IN, and NULL handling.
