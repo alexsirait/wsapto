@@ -1461,7 +1461,7 @@ def execute_query_with_pagination(
     Returns:
         dict: A dictionary containing paginated data and metadata:
             - rows: List of result rows
-            - page: Current page number
+            - current_page: Current page number
             - page_size: Items per page
             - total_pages: Total number of pages
             - total_rows: Total number of rows
@@ -1511,16 +1511,16 @@ def execute_query_with_pagination(
         prev_page_url = None
         
         if page < total_pages:
-            query_params['page'] = str(page + 1)
+            query_params['current_page'] = str(page + 1)
             next_page_url = f"{base_url}?{urlencode(query_params)}"
         
         if page > 1:
-            query_params['page'] = str(page - 1)
+            query_params['current_page'] = str(page - 1)
             prev_page_url = f"{base_url}?{urlencode(query_params)}"
         
         # Construct response
         pagination = {
-            "page": page,
+            "current_page": page,
             "page_size": per_page,
             "total_pages": total_pages,
             "total_rows": total_rows,
@@ -1565,7 +1565,7 @@ def get_data_with_pagination(
     Returns:
         dict: A dictionary containing paginated data and metadata:
             - rows: List of result rows
-            - page: Current page number
+            - current_page: Current page number
             - page_size: Items per page
             - total_pages: Total number of pages
             - total_rows: Total number of rows
@@ -1672,16 +1672,16 @@ def get_data_with_pagination(
         prev_page_url = None
         
         if page < total_pages:
-            query_params['page'] = str(page + 1)
+            query_params['current_page'] = str(page + 1)
             next_page_url = f"{base_url}?{urlencode(query_params)}"
         
         if page > 1:
-            query_params['page'] = str(page - 1)
+            query_params['current_page'] = str(page - 1)
             prev_page_url = f"{base_url}?{urlencode(query_params)}"
         
         # Construct response
         pagination = {
-            "page": page,
+            "current_page": page,
             "page_size": per_page,
             "total_pages": total_pages,
             "total_rows": total_rows,
