@@ -1548,12 +1548,12 @@ def get_data_with_pagination(
     default_per_page = 10
 ) -> dict:
     """
-    Helper to read data from a table with pagination, supporting various operators like !=, IN, NOT IN, and NULL handling.
+    Helper to read data from a table with pagination, supporting various operators like !=, IN, NOT IN, NULL handling, and BETWEEN for dates.
  
     Args:
         request: HttpRequest object to get pagination parameters and build URLs.
         table_name: The name of the table.
-        filters: Conditions to filter data.
+        filters: Conditions to filter data (supports =, !=, IN, NOT IN, NULL, and BETWEEN).
         search: Search keyword.
         search_columns: Columns to perform search on.
         columns: Columns to select, default is '*'.
@@ -1620,6 +1620,13 @@ def get_data_with_pagination(
                     else:
                         conditions.append(f"{column} <> %s")
                         values.append(value)
+                elif "__between" in key:
+                    column = key.replace("__between", "")
+                    if isinstance(value, (list, tuple)) and len(value) == 2:
+                        conditions.append(f"{column} BETWEEN %s AND %s")
+                        values.extend(value)  # Expecting value to be [start_date, end_date]
+                    else:
+                        raise ValueError(f"Filter '{key}' requires a tuple/list with exactly two values for BETWEEN")
                 else:
                     if value is None:
                         conditions.append(f"{key} IS NULL")
