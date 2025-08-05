@@ -174,6 +174,13 @@ def get_data(table_name, filters=None, search=None, search_columns=None, columns
                     else:
                         conditions.append(f"{column} <> %s")
                         values.append(value)
+                elif "__between" in key:
+                    column = key.replace("__between", "")
+                    if isinstance(value, (list, tuple)) and len(value) == 2:
+                        conditions.append(f"{column} BETWEEN %s AND %s")
+                        values.extend(value)
+                    else:
+                        raise ValueError(f"Filter '{key}' requires a tuple/list with exactly two values for BETWEEN")
                 else:
                     if value is None:
                         conditions.append(f"{key} IS NULL")
@@ -1702,5 +1709,3 @@ def get_data_with_pagination(
     
     except Exception as e:
         raise Exception(f"Error in read with pagination from database '{db_alias}': {e}")
-    
-    
