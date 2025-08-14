@@ -123,11 +123,11 @@ def insert_data(table_name, data, db_alias='default'):
 def get_data(table_name, filters=None, search=None, search_columns=None, columns='*', 
              limit=None, offset=None, order_by=None, db_alias='default'):
     """
-    Helper to read data from a table with support for various operators like !=, IN, NOT IN, and NULL handling.
+    Helper to read data from a table with support for operators like !=, IN, NOT IN, >, <, >=, <=, OR, and NULL handling.
  
     Args:
         table_name (str): The name of the table.
-        filters (dict, optional): Conditions to filter data.
+        filters (dict or list, optional): Conditions to filter data, supports OR with {"OR": [filter1, filter2]}.
         search (str, optional): Search keyword.
         search_columns (list, optional): Columns to perform search on.
         columns (str or list, optional): Columns to select, default is '*'.
@@ -148,45 +148,82 @@ def get_data(table_name, filters=None, search=None, search_columns=None, columns
         # Adding filters (WHERE clause)
         conditions = []
         values = []
- 
-        if filters:
-            for key, value in filters.items():
+
+        def process_filter(filter_dict):
+            """Helper to process a single filter dictionary."""
+            local_conditions = []
+            local_values = []
+            for key, value in filter_dict.items():
                 if "__ne" in key:  # Not equal operator
                     column = key.replace("__ne", "")
                     if value is None:
-                        conditions.append(f"{column} IS NOT NULL")
+                        local_conditions.append(f"{column} IS NOT NULL")
                     else:
-                        conditions.append(f"{column} <> %s")
-                        values.append(value)
+                        local_conditions.append(f"{column} <> %s")
+                        local_values.append(value)
                 elif "__in" in key:  # IN operator
                     column = key.replace("__in", "")
                     if isinstance(value, (list, tuple)):
-                        conditions.append(f"{column} IN ({', '.join(['%s'] * len(value))})")
-                        values.extend(value)
+                        local_conditions.append(f"{column} IN ({', '.join(['%s'] * len(value))})")
+                        local_values.extend(value)
                     else:
-                        conditions.append(f"{column} = %s")
-                        values.append(value)
+                        local_conditions.append(f"{column} = %s")
+                        local_values.append(value)
                 elif "__not_in" in key:  # NOT IN operator
                     column = key.replace("__not_in", "")
                     if isinstance(value, (list, tuple)):
-                        conditions.append(f"{column} NOT IN ({', '.join(['%s'] * len(value))})")
-                        values.extend(value)
+                        local_conditions.append(f"{column} NOT IN ({', '.join(['%s'] * len(value))})")
+                        local_values.extend(value)
                     else:
-                        conditions.append(f"{column} <> %s")
-                        values.append(value)
-                elif "__between" in key:
+                        local_conditions.append(f"{column} <> %s")
+                        local_values.append(value)
+                elif "__between" in key:  # BETWEEN operator
                     column = key.replace("__between", "")
                     if isinstance(value, (list, tuple)) and len(value) == 2:
-                        conditions.append(f"{column} BETWEEN %s AND %s")
-                        values.extend(value)
+                        local_conditions.append(f"{column} BETWEEN %s AND %s")
+                        local_values.extend(value)
                     else:
                         raise ValueError(f"Filter '{key}' requires a tuple/list with exactly two values for BETWEEN")
+                elif "__gt" in key:  # Greater than operator
+                    column = key.replace("__gt", "")
+                    local_conditions.append(f"{column} > %s")
+                    local_values.append(value)
+                elif "__lt" in key:  # Less than operator
+                    column = key.replace("__lt", "")
+                    local_conditions.append(f"{column} < %s")
+                    local_values.append(value)
+                elif "__gte" in key:  # Greater than or equal operator
+                    column = key.replace("__gte", "")
+                    local_conditions.append(f"{column} >= %s")
+                    local_values.append(value)
+                elif "__lte" in key:  # Less than or equal operator
+                    column = key.replace("__lte", "")
+                    local_conditions.append(f"{column} <= %s")
+                    local_values.append(value)
                 else:
                     if value is None:
-                        conditions.append(f"{key} IS NULL")
+                        local_conditions.append(f"{key} IS NULL")
                     else:
-                        conditions.append(f"{key} = %s")
-                        values.append(value)
+                        local_conditions.append(f"{key} = %s")
+                        local_values.append(value)
+            return local_conditions, local_values
+
+        if filters:
+            if isinstance(filters, dict) and "OR" in filters:
+                # Handle OR conditions
+                or_conditions = []
+                for filter_dict in filters["OR"]:
+                    sub_conditions, sub_values = process_filter(filter_dict)
+                    if sub_conditions:
+                        or_conditions.append(f"({' AND '.join(sub_conditions)})")
+                        values.extend(sub_values)
+                if or_conditions:
+                    conditions.append(f"({' OR '.join(or_conditions)})")
+            else:
+                # Handle standard AND conditions
+                filter_conditions, filter_values = process_filter(filters if isinstance(filters, dict) else {})
+                conditions.extend(filter_conditions)
+                values.extend(filter_values)
  
         # Adding search condition (LIKE) for the given columns
         if search and search_columns:
@@ -1545,22 +1582,22 @@ def execute_query_with_pagination(
 def get_data_with_pagination(
     request,
     table_name,
-    filters = None,
-    search = None,
-    search_columns = None,
-    columns = '*',
-    order_by = None,
-    db_alias = 'default',
-    default_page = 1,
-    default_per_page = 10
+    filters=None,
+    search=None,
+    search_columns=None,
+    columns='*',
+    order_by=None,
+    db_alias='default',
+    default_page=1,
+    default_per_page=10
 ) -> dict:
     """
-    Helper to read data from a table with pagination, supporting various operators like !=, IN, NOT IN, NULL handling, and BETWEEN for dates.
+    Helper to read data from a table with pagination, supporting operators like =, !=, IN, NOT IN, >, <, >=, <=, OR, NULL handling, and BETWEEN for dates.
  
     Args:
         request: HttpRequest object to get pagination parameters and build URLs.
         table_name: The name of the table.
-        filters: Conditions to filter data (supports =, !=, IN, NOT IN, NULL, and BETWEEN).
+        filters: Conditions to filter data (supports =, !=, IN, NOT IN, >, <, >=, <=, OR, NULL, and BETWEEN).
         search: Search keyword.
         search_columns: Columns to perform search on.
         columns: Columns to select, default is '*'.
@@ -1581,11 +1618,6 @@ def get_data_with_pagination(
             - prev_page_url: URL for previous page (or None)
     """
     try:
-        # Initialize variables
-        pagination = {}
-        values = []
-        conditions = []
-        
         # Get pagination parameters from request
         try:
             page = int(request.GET.get("page", default_page))
@@ -1596,87 +1628,32 @@ def get_data_with_pagination(
         
         offset = (page - 1) * per_page
         
-        # Build base query
-        if isinstance(columns, list):
-            columns = ', '.join(columns)
-        sql_query = f"SELECT {columns} FROM {table_name}"
-        
-        # Add filters
-        if filters:
-            for key, value in filters.items():
-                if "__ne" in key:
-                    column = key.replace("__ne", "")
-                    if value is None:
-                        conditions.append(f"{column} IS NOT NULL")
-                    else:
-                        conditions.append(f"{column} <> %s")
-                        values.append(value)
-                elif "__in" in key:
-                    column = key.replace("__in", "")
-                    if isinstance(value, (list, tuple)):
-                        conditions.append(f"{column} IN ({', '.join(['%s'] * len(value))})")
-                        values.extend(value)
-                    else:
-                        conditions.append(f"{column} = %s")
-                        values.append(value)
-                elif "__not_in" in key:
-                    column = key.replace("__not_in", "")
-                    if isinstance(value, (list, tuple)):
-                        conditions.append(f"{column} NOT IN ({', '.join(['%s'] * len(value))})")
-                        values.extend(value)
-                    else:
-                        conditions.append(f"{column} <> %s")
-                        values.append(value)
-                elif "__between" in key:
-                    column = key.replace("__between", "")
-                    if isinstance(value, (list, tuple)) and len(value) == 2:
-                        conditions.append(f"{column} BETWEEN %s AND %s")
-                        values.extend(value)  # Expecting value to be [start_date, end_date]
-                    else:
-                        raise ValueError(f"Filter '{key}' requires a tuple/list with exactly two values for BETWEEN")
-                else:
-                    if value is None:
-                        conditions.append(f"{key} IS NULL")
-                    else:
-                        conditions.append(f"{key} = %s")
-                        values.append(value)
-        
-        # Add search conditions
-        if search and search_columns:
-            search_conditions = [f"{col}::text ILIKE %s" for col in search_columns]
-            conditions.append(f"({' OR '.join(search_conditions)})")
-            values += [f"%{search}%"] * len(search_columns)
-        
-        # Combine conditions for count query
-        count_query = f"SELECT COUNT(*) as total FROM {table_name}"
-        if conditions:
-            count_query += ' WHERE ' + ' AND '.join(conditions)
-        
-        # Execute count query
-        total_rows = get_data(table_name, filters, search, search_columns, columns=['COUNT(*) as total'], db_alias=db_alias)[0]["total"]
+        # Execute count query using get_data
+        total_rows = get_data(
+            table_name=table_name,
+            filters=filters,
+            search=search,
+            search_columns=search_columns,
+            columns=['COUNT(*) as total'],
+            db_alias=db_alias
+        )[0]["total"]
         
         # Calculate pagination metadata
         total_pages = (total_rows + per_page - 1) // per_page
         last_page = total_pages
         
-        # Add conditions to main query
-        if conditions:
-            sql_query += ' WHERE ' + ' AND '.join(conditions)
-        
-        # Add ORDER BY clause
-        if order_by:
-            if isinstance(order_by, list):
-                order_by_clause = ', '.join(order_by)
-            else:
-                order_by_clause = order_by
-            sql_query += f" ORDER BY {order_by_clause}"
-        
-        # Add pagination
-        sql_query += f" LIMIT %s OFFSET %s"
-        values.extend([per_page, offset])
-        
-        # Execute paginated query
-        data = get_data(table_name, filters, search, search_columns, columns, limit=per_page, offset=offset, order_by=order_by, db_alias=db_alias)
+        # Execute paginated query using get_data
+        data = get_data(
+            table_name=table_name,
+            filters=filters,
+            search=search,
+            search_columns=search_columns,
+            columns=columns,
+            limit=per_page,
+            offset=offset,
+            order_by=order_by,
+            db_alias=db_alias
+        )
         
         # Build pagination URLs
         base_url = request.build_absolute_uri(request.path)
