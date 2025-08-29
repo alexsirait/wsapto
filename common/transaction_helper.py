@@ -546,6 +546,7 @@ def exists_data(table_name, filters, id_column='id', exclude_id=None, db_alias='
     Args:
         table_name (str): The name of the table to check.
         filters (dict): Filters for the WHERE clause to specify which rows to check.
+                        Supports '__ne', '__in', '__notin', '__between', '__gt', '__lt', '__gte', '__lte'.
         id_column (str): The name of the ID column to check against.
         exclude_id (int, optional): The ID to exclude from the check.
         db_alias (str, optional): The database alias to use (default is 'default').
@@ -554,21 +555,82 @@ def exists_data(table_name, filters, id_column='id', exclude_id=None, db_alias='
         bool: True if at least one row matches the filters, False otherwise.
     """
     try:
-        # Build the WHERE clause
-        where_clause = ' AND '.join([f"{key}=%s" for key in filters.keys()])
- 
+        where_clause = []
+        params = []
+
+        # Process each filter
+        for key, value in filters.items():
+            if key.endswith('__between'):
+                # Handle BETWEEN operator
+                column_name = key.replace('__between', '')
+                if isinstance(value, list) and len(value) == 2:
+                    where_clause.append(f"{column_name} BETWEEN %s AND %s")
+                    params.extend(value)  # Add start and end values
+                else:
+                    raise ValueError(f"Invalid value for {key}: expected a list with two values")
+            elif key.endswith('__ne'):
+                # Handle not equal operator
+                column_name = key.replace('__ne', '')
+                where_clause.append(f"{column_name} != %s")
+                params.append(value)
+            elif key.endswith('__in'):
+                # Handle IN operator
+                column_name = key.replace('__in', '')
+                if isinstance(value, (list, tuple)) and value:
+                    placeholders = ', '.join(['%s'] * len(value))
+                    where_clause.append(f"{column_name} IN ({placeholders})")
+                    params.extend(value)
+                else:
+                    raise ValueError(f"Invalid value for {key}: expected a non-empty list or tuple")
+            elif key.endswith('__notin'):
+                # Handle NOT IN operator
+                column_name = key.replace('__notin', '')
+                if isinstance(value, (list, tuple)) and value:
+                    placeholders = ', '.join(['%s'] * len(value))
+                    where_clause.append(f"{column_name} NOT IN ({placeholders})")
+                    params.extend(value)
+                else:
+                    raise ValueError(f"Invalid value for {key}: expected a non-empty list or tuple")
+            elif key.endswith('__gt'):
+                # Handle greater than operator
+                column_name = key.replace('__gt', '')
+                where_clause.append(f"{column_name} > %s")
+                params.append(value)
+            elif key.endswith('__lt'):
+                # Handle less than operator
+                column_name = key.replace('__lt', '')
+                where_clause.append(f"{column_name} < %s")
+                params.append(value)
+            elif key.endswith('__gte'):
+                # Handle greater than or equal operator
+                column_name = key.replace('__gte', '')
+                where_clause.append(f"{column_name} >= %s")
+                params.append(value)
+            elif key.endswith('__lte'):
+                # Handle less than or equal operator
+                column_name = key.replace('__lte', '')
+                where_clause.append(f"{column_name} <= %s")
+                params.append(value)
+            else:
+                # Standard equality filter
+                where_clause.append(f"{key}=%s")
+                params.append(value)
+
         # If exclude_id is provided, add the condition to exclude it
-        params = list(filters.values())
         if exclude_id is not None:
-            where_clause += f' AND {id_column} != %s'
-            params.append(exclude_id)  # Append exclude_id to params
- 
+            where_clause.append(f"{id_column} != %s")
+            params.append(exclude_id)
+
+        # Combine all conditions with AND
+        where_clause = ' AND '.join(where_clause)
+
+        # Build and execute the query
         sql_query = f"SELECT EXISTS(SELECT 1 FROM {table_name} WHERE {where_clause})"
- 
+
         with connections[db_alias].cursor() as cursor:
-            cursor.execute(sql_query, params)  # Pass all parameters
-            exists = cursor.fetchone()[0]  # Fetch the first result (boolean)
- 
+            cursor.execute(sql_query, params)
+            exists = cursor.fetchone()[0]
+
         return exists
     except Exception as e:
         raise Exception(f"Error in exists_data on database '{db_alias}': {e}")
