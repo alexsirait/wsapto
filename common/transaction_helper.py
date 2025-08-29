@@ -546,7 +546,7 @@ def exists_data(table_name, filters, id_column='id', exclude_id=None, db_alias='
     Args:
         table_name (str): The name of the table to check.
         filters (dict): Filters for the WHERE clause to specify which rows to check.
-                        Supports '__ne', '__in', '__notin', '__between', '__gt', '__lt', '__gte', '__lte'.
+                        Supports '__ne', '__in', '__not_in', '__between', '__gt', '__lt', '__gte', '__lte'.
         id_column (str): The name of the ID column to check against.
         exclude_id (int, optional): The ID to exclude from the check.
         db_alias (str, optional): The database alias to use (default is 'default').
@@ -582,9 +582,9 @@ def exists_data(table_name, filters, id_column='id', exclude_id=None, db_alias='
                     params.extend(value)
                 else:
                     raise ValueError(f"Invalid value for {key}: expected a non-empty list or tuple")
-            elif key.endswith('__notin'):
+            elif key.endswith('__not_in'):
                 # Handle NOT IN operator
-                column_name = key.replace('__notin', '')
+                column_name = key.replace('__not_in', '')
                 if isinstance(value, (list, tuple)) and value:
                     placeholders = ', '.join(['%s'] * len(value))
                     where_clause.append(f"{column_name} NOT IN ({placeholders})")
