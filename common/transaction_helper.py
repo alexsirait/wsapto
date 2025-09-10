@@ -355,43 +355,53 @@ def insert_get_id_data(table_name, data, column_id, db_alias='default'):
 def first_data(table_name, filters=None, columns='*', order_by=None, db_alias='default'):
     """
     Helper to get the first row of data from a table.
- 
+
     Args:
         table_name (str): The name of the table to read from.
-        filters (dict, optional): Filters for the WHERE clause.
+        filters (dict, optional): Filters for the WHERE clause. 
+            Supports equality (=) by default and not equal (__ne suffix, e.g., {'field__ne': value}).
         columns (str or list, optional): Columns to select, '*' by default.
         order_by (str or list, optional): Column or columns to order the results by.
         db_alias (str, optional): The database alias to use (default is 'default').
- 
+
     Returns:
         dict or None: A dictionary representing the first row, or None if no data found.
     """
     try:
         if isinstance(columns, list):
             columns = ', '.join(columns)
- 
+
         sql_query = f"SELECT {columns} FROM {table_name}"
- 
+
         # Adding filters (WHERE clause)
         values = []
         if filters:
-            where_conditions = [f"{key}=%s" for key in filters.keys()]
+            where_conditions = []
+            for key, value in filters.items():
+                if '__ne' in key:       # not equal
+                    field = key.split('__ne')[0]
+                    operator = '<>'
+                else:                   # default equal
+                    field = key
+                    operator = '='
+                where_conditions.append(f"{field} {operator} %s")
+                values.append(value)
+
             sql_query += ' WHERE ' + ' AND '.join(where_conditions)
-            values.extend(filters.values())
- 
+
         # Adding order by clause
         if order_by:
             if isinstance(order_by, list):
                 order_by = ', '.join(order_by)
             sql_query += f" ORDER BY {order_by}"
- 
+
         sql_query += " LIMIT 1"  # Limit to the first row
- 
+
         with connections[db_alias].cursor() as cursor:
             cursor.execute(sql_query, values)
             columns = [col[0] for col in cursor.description]
             row = cursor.fetchone()  # Get the first row
- 
+
         return dict(zip(columns, row)) if row else None
     except Exception as e:
         raise Exception(f"Error in first_data on database '{db_alias}': {e}")
@@ -692,7 +702,7 @@ def get_value(table_name, column_name, filters=None, type=None, db_alias='defaul
     Args:
         table_name (str): The name of the table to read from.
         column_name (str): The column from which to retrieve the value.
-        filters (dict, optional): Filters for the WHERE clause.
+        filters (dict, optional): Filters for the WHERE clause. Supports equality (=) by default and not equal (__ne suffix, e.g., {'field__ne': value} for field != value).
         type (str, optional): Type of the value, e.g., "UUID" for UUID-specific error handling.
         db_alias (str, optional): The database alias to use (default is 'default').
  
@@ -703,15 +713,27 @@ def get_value(table_name, column_name, filters=None, type=None, db_alias='defaul
         sql_query = f"SELECT {column_name} FROM {table_name}"
  
         # Adding filters (WHERE clause)
+        params = []
         if filters:
-            where_clause = ' WHERE ' + ' AND '.join([f"{key}=%s" for key in filters.keys()])
+            where_parts = []
+            for key, value in filters.items():
+                if '__ne' in key:
+                    field = key.split('__ne')[0]
+                    operator = '<>'
+                else:
+                    field = key
+                    operator = '='
+                where_parts.append(f"{field} {operator} %s")
+                params.append(value)
+            
+            where_clause = ' WHERE ' + ' AND '.join(where_parts)
             sql_query += where_clause
  
         sql_query += " LIMIT 1"  # Limit to the first row
  
         # Use the db_alias to get the correct connection for the desired database
         with connections[db_alias].cursor() as cursor:
-            cursor.execute(sql_query, list(filters.values()) if filters else [])
+            cursor.execute(sql_query, params)
             row = cursor.fetchone()  # Get the first row
  
         # If type is UUID and no row is found, raise specific UUID not found error
