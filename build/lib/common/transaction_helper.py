@@ -262,7 +262,6 @@ def get_data(table_name, filters=None, search=None, search_columns=None, columns
     except Exception as e:
         raise Exception(f"Error in read from database '{db_alias}': {e}")
  
-# Helper: Update data in a table
 def update_data(table_name, data, filters, db_alias='default'):
     """
     Helper to update data in a table.
@@ -271,6 +270,7 @@ def update_data(table_name, data, filters, db_alias='default'):
         table_name (str): The name of the table where data will be updated.
         data (dict): The data to update, with column names as keys.
         filters (dict): Filters for the WHERE clause to specify which rows to update.
+                        Supports '__ne' for 'not equal' conditions (e.g., {'column__ne': value}).
         db_alias (str, optional): The database alias to use (default is 'default').
  
     Returns:
@@ -283,12 +283,27 @@ def update_data(table_name, data, filters, db_alias='default'):
             raise ValueError("Filters cannot be empty to prevent updating all rows.")
  
         set_clause = ', '.join([f"{key}=%s" for key in data.keys()])
-        where_clause = ' AND '.join([f"{key}=%s" for key in filters.keys()])
+        
+        # Prepare WHERE clause with support for __ne
+        where_parts = []
+        filter_values = []
+        for key, value in filters.items():
+            if key.endswith('__ne'):
+                # Handle 'not equal' condition
+                column = key[:-4]  # Remove '__ne' suffix
+                where_parts.append(f"{column}!=%s")
+                filter_values.append(value)
+            else:
+                # Handle standard equality condition
+                where_parts.append(f"{key}=%s")
+                filter_values.append(value)
+        
+        where_clause = ' AND '.join(where_parts)
         sql_query = f"UPDATE {table_name} SET {set_clause} WHERE {where_clause}"
  
         with transaction.atomic(using=db_alias):
             with connections[db_alias].cursor() as cursor:
-                cursor.execute(sql_query, list(data.values()) + list(filters.values()))
+                cursor.execute(sql_query, list(data.values()) + filter_values)
  
         return True
     except Exception as e:
@@ -351,7 +366,6 @@ def insert_get_id_data(table_name, data, column_id, db_alias='default'):
     except Exception as e:
         raise Exception(f"Error in insert_get_id on database '{db_alias}': {e}")
  
-# Helper: Get the first row of data from a table
 def first_data(table_name, filters=None, columns='*', order_by=None, db_alias='default'):
     """
     Helper to get the first row of data from a table.
@@ -359,7 +373,8 @@ def first_data(table_name, filters=None, columns='*', order_by=None, db_alias='d
     Args:
         table_name (str): The name of the table to read from.
         filters (dict, optional): Filters for the WHERE clause. 
-            Supports equality (=) by default and not equal (__ne suffix, e.g., {'field__ne': value}).
+            Supports equality (=) by default, not equal (__ne suffix, e.g., {'field__ne': value}),
+            and IN (__in suffix, e.g., {'field__in': [value1, value2, ...]}).
         columns (str or list, optional): Columns to select, '*' by default.
         order_by (str or list, optional): Column or columns to order the results by.
         db_alias (str, optional): The database alias to use (default is 'default').
@@ -381,11 +396,20 @@ def first_data(table_name, filters=None, columns='*', order_by=None, db_alias='d
                 if '__ne' in key:       # not equal
                     field = key.split('__ne')[0]
                     operator = '<>'
+                    where_conditions.append(f"{field} {operator} %s")
+                    values.append(value)
+                elif '__in' in key:     # IN clause
+                    field = key.split('__in')[0]
+                    if not isinstance(value, (list, tuple)) or not value:
+                        raise ValueError(f"Value for {key} must be a non-empty list or tuple")
+                    placeholders = ', '.join(['%s'] * len(value))
+                    where_conditions.append(f"{field} IN ({placeholders})")
+                    values.extend(value)
                 else:                   # default equal
                     field = key
                     operator = '='
-                where_conditions.append(f"{field} {operator} %s")
-                values.append(value)
+                    where_conditions.append(f"{field} {operator} %s")
+                    values.append(value)
 
             sql_query += ' WHERE ' + ' AND '.join(where_conditions)
 
