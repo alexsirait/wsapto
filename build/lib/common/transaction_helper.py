@@ -1796,12 +1796,12 @@ def get_data_with_pagination(
     except Exception as e:
         raise Exception(f"Error in read with pagination from database '{db_alias}': {e}")
 
-def upload_file_api(file_path, folder_name="", api_key="mysatnusa-file", base_url="192.168.88.60"):
+def upload_file_wsapto(file_obj, folder_name="", api_key="mysatnusa-file", base_url="http://192.168.88.60:40020/api/file-management"):
     """
     Helper untuk upload file ke file-management API.
 
     Args:
-        file_path (str): Lokasi file yang mau diupload.
+        file_obj (str | file-like): Path string atau InMemoryUploadedFile/File.
         folder_name (str): Folder tujuan di server (opsional).
         api_key (str): API Key (default: 'mysatnusa-file').
         base_url (str): Base URL API file management.
@@ -1810,22 +1810,28 @@ def upload_file_api(file_path, folder_name="", api_key="mysatnusa-file", base_ur
         dict: Response JSON dari API (berisi file_url, relative_path, dll).
     """
     try:
-        url = f"http://{base_url}:40020/api/file-management/upload_file"
+        url = f"{base_url}/upload_file"
 
         headers = {
             "x-api-key-mysatnusa": api_key,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
         }
 
-        files = {"file": open(file_path, "rb")}
+        # kalau input berupa string → anggap path file
+        if isinstance(file_obj, str):
+            files = {"file": open(file_obj, "rb")}
+        else:
+            # kalau input sudah file-like object (misalnya InMemoryUploadedFile)
+            files = {"file": (getattr(file_obj, "name", "upload.bin"), file_obj)}
+
         data = {"folder_name": folder_name} if folder_name else {}
 
         response = requests.post(url, headers=headers, files=files, data=data)
 
-        # kalau berhasil return JSON
         if response.status_code == 200:
             return response.json()
         else:
-            return {"error": response.text, "status_code": response.status_code}
+            return {"status_code": response.status_code, "message": response.text, "messagetype": "E", "data": []}
 
     except Exception as e:
-        raise Exception(f"Error in upload_file_api: {e}")
+        return {"status_code": 400, "message": f"Error in upload_file_api: {e}", "messagetype": "E", "data": []}

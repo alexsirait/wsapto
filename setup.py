@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="wsapto",  # Nama package Anda
-    version="0.2.06",
+    version="0.2.08",
     author="Alex Sirait",
     author_email="alexsirait1001@gmail.com",
     description="wsapto sooo coolll",
