@@ -24,6 +24,7 @@ from typing import Any
 from typing import Optional
 import mimetypes
 from urllib.parse import urlencode
+import requests
 
 # Global lock untuk sinkronisasi akses ke cache
 cache_lock = threading.Lock()
@@ -1794,3 +1795,37 @@ def get_data_with_pagination(
     
     except Exception as e:
         raise Exception(f"Error in read with pagination from database '{db_alias}': {e}")
+
+def upload_file_api(file_path, folder_name="", api_key="mysatnusa-file", base_url="192.168.88.60"):
+    """
+    Helper untuk upload file ke file-management API.
+
+    Args:
+        file_path (str): Lokasi file yang mau diupload.
+        folder_name (str): Folder tujuan di server (opsional).
+        api_key (str): API Key (default: 'mysatnusa-file').
+        base_url (str): Base URL API file management.
+
+    Returns:
+        dict: Response JSON dari API (berisi file_url, relative_path, dll).
+    """
+    try:
+        url = f"http://{base_url}:40020/api/file-management/upload_file"
+
+        headers = {
+            "x-api-key-mysatnusa": api_key,
+        }
+
+        files = {"file": open(file_path, "rb")}
+        data = {"folder_name": folder_name} if folder_name else {}
+
+        response = requests.post(url, headers=headers, files=files, data=data)
+
+        # kalau berhasil return JSON
+        if response.status_code == 200:
+            return response.json()
+        else:
+            return {"error": response.text, "status_code": response.status_code}
+
+    except Exception as e:
+        raise Exception(f"Error in upload_file_api: {e}")
