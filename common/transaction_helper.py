@@ -185,14 +185,6 @@ def get_data(table_name, filters=None, search=None, search_columns=None, columns
                         local_values.extend(value)
                     else:
                         raise ValueError(f"Filter '{key}' requires a tuple/list with exactly two values for BETWEEN")
-                elif "__gt" in key:  # Greater than operator
-                    column = key.replace("__gt", "")
-                    local_conditions.append(f"{column} > %s")
-                    local_values.append(value)
-                elif "__lt" in key:  # Less than operator
-                    column = key.replace("__lt", "")
-                    local_conditions.append(f"{column} < %s")
-                    local_values.append(value)
                 elif "__gte" in key:  # Greater than or equal operator
                     column = key.replace("__gte", "")
                     local_conditions.append(f"{column} >= %s")
@@ -200,6 +192,14 @@ def get_data(table_name, filters=None, search=None, search_columns=None, columns
                 elif "__lte" in key:  # Less than or equal operator
                     column = key.replace("__lte", "")
                     local_conditions.append(f"{column} <= %s")
+                    local_values.append(value)
+                elif "__gt" in key:  # Greater than operator
+                    column = key.replace("__gt", "")
+                    local_conditions.append(f"{column} > %s")
+                    local_values.append(value)
+                elif "__lt" in key:  # Less than operator
+                    column = key.replace("__lt", "")
+                    local_conditions.append(f"{column} < %s")
                     local_values.append(value)
                 else:
                     if value is None:
@@ -626,16 +626,6 @@ def exists_data(table_name, filters, id_column='id', exclude_id=None, db_alias='
                     params.extend(value)
                 else:
                     raise ValueError(f"Invalid value for {key}: expected a non-empty list or tuple")
-            elif key.endswith('__gt'):
-                # Handle greater than operator
-                column_name = key.replace('__gt', '')
-                where_clause.append(f"{column_name} > %s")
-                params.append(value)
-            elif key.endswith('__lt'):
-                # Handle less than operator
-                column_name = key.replace('__lt', '')
-                where_clause.append(f"{column_name} < %s")
-                params.append(value)
             elif key.endswith('__gte'):
                 # Handle greater than or equal operator
                 column_name = key.replace('__gte', '')
@@ -645,6 +635,16 @@ def exists_data(table_name, filters, id_column='id', exclude_id=None, db_alias='
                 # Handle less than or equal operator
                 column_name = key.replace('__lte', '')
                 where_clause.append(f"{column_name} <= %s")
+                params.append(value)
+            elif key.endswith('__gt'):
+                # Handle greater than operator
+                column_name = key.replace('__gt', '')
+                where_clause.append(f"{column_name} > %s")
+                params.append(value)
+            elif key.endswith('__lt'):
+                # Handle less than operator
+                column_name = key.replace('__lt', '')
+                where_clause.append(f"{column_name} < %s")
                 params.append(value)
             else:
                 # Standard equality filter
