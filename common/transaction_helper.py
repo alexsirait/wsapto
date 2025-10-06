@@ -1234,55 +1234,64 @@ def validate_file_upload(request):
     if total_size > MAX_TOTAL_SIZE_MB:
         raise ValueError(f"Total file upload size exceeds {MAX_TOTAL_SIZE_MB}MB.")
 
-# Daftar pola berbahaya (dari kode Anda sebelumnya)
+# Pola berbahaya yang lebih spesifik (tidak termasuk 'id' yang terlalu generik)
 suspicious_patterns = [
-    # XSS Injection
-    r"<script\b[^>]*>.*?</script>",  # Hanya deteksi <script> dengan konten berbahaya
-    r"(?i)\b(on\w+=['\"][^'\"]*['\"])",  # Event handler seperti onload, onclick
-    r"(?i)<iframe\b[^>]*src=['\"][^'\"]*['\"][^>]*>.*?</iframe>",  # Iframe dengan src mencurigakan
-    r"(?i)<meta\b[^>]*http-equiv=['\"]refresh['\"][^>]*content=['\"][^'\"]*['\"][^>]*>",  # Meta refresh redirect
-    r"(?i)<img\b[^>]*src=['\"]javascript:[^'\"]*['\"][^>]*>",  # Img dengan javascript: URI
-    
-    # SQL Injection
-    r"(?i)\b(union\s+select|drop\s+table|--\s+|/\*|\*/|;\s*xp_cmdshell|exec\s+xp_)\b|#(?=\s*(select|insert|update|delete|drop))",  # Perintah SQL berbahaya
-    r"(?i)\b(select\s+.*?from|insert\s+into|update\s+.*?set|delete\s+from)\s*['\";]",  # Query SQL dengan tanda berbahaya
-    r"(?i)\b(load_file|outfile|dumpfile|sleep\(\d+\)|benchmark\(\d+,\d+\))\b",  # Fungsi SQL berbahaya
-    
-    # JavaScript Injection
-    r"(?i)\b(alert|confirm|prompt|document\.cookie|eval|setTimeout|setInterval|Function)\s*\(",  # Fungsi JS berbahaya dengan pemanggilan
-    r"(?i)\b(fetch|XMLHttpRequest|webkitRequestFileSystem)\s*\(",  # API berbahaya dengan pemanggilan
-    r"(?i)\b(window\.location|history\.go|localStorage|sessionStorage)\s*[=\.]",  # Manipulasi browser
-    
-    # Dangerous Encodings & URI Schemes
-    r"(?i)%3Cscript%3E|%3Ciframe%3E|%3Cimg%20src=['\"]javascript:|%3Cbody%20onload|%3Conerror=",  # Encoded attacks
-    r"(?i)\b(data:text/html|javascript:|vbscript:|mocha:|livescript:|file://)\b",  # URI berbahaya
-    
-    # NoSQL Injection & Command Injection
-    r"(?i)\b(\$ne|\$eq|\$gte|\$lte|\$regex|\$where)\s*[:=]",  # MongoDB operator mencurigakan
-    r"(?i)\b(cat\s+/etc/passwd|ls\s+-la|whoami|id|uname\s+-a|rm\s+-rf|chmod\s+777)\b",  # Perintah sistem
-    
-    # Path Traversal Attack
-    r"(?i)\b(\.\./|\.\.\\|/etc/passwd|c:\\windows\\system32)\b",  # Path traversal
+    # tetap cek script/iframe/meta/img javascript secara langsung pada HTML mentah
+    r"<script\b[^>]*>.*?</script>",
+    r"(?i)\b(on\w+\s*=\s*['\"][^'\"]*['\"])",  # attribute event handler
+    r"(?i)<iframe\b[^>]*src=['\"][^'\"]*['\"][^>]*>.*?</iframe>",
+    r"(?i)<meta\b[^>]*http-equiv=['\"]refresh['\"][^>]*content=['\"][^'\"]*['\"][^>]*>",
+    r"(?i)<img\b[^>]*src=['\"]javascript:[^'\"]*['\"][^>]*>",
+    # SQL injection — lebih ketat, jangan gunakan single-token yang umum
+    r"(?i)\b(union\s+select|drop\s+table|--\s|/\*|\*/|;\s*xp_cmdshell|exec\s+xp_)\b",
+    r"(?i)\b(select\s+.*?from|insert\s+into|update\s+.*?set|delete\s+from)\s*['\"]",
+    r"(?i)\b(load_file|outfile|dumpfile|sleep\(\d+\)|benchmark\(\d+,\d+\))\b",
+    # JS API/function calls — pastikan ada tanda () untuk meminimalkan false positive
+    r"(?i)\b(alert|confirm|prompt|document\.cookie|eval|setTimeout|setInterval|Function)\s*\(",
+    r"(?i)\b(fetch|XMLHttpRequest|webkitRequestFileSystem)\s*\(",
+    r"(?i)\b(window\.location|history\.go|localStorage|sessionStorage)\s*[=\.]",
+    # Dangerous URI schemes (cek pada teks setelah decode juga)
+    r"(?i)%3Cscript%3E|%3Ciframe%3E|%3Cimg%20src=['\"]javascript:|%3Cbody%20onload|%3Conerror=",
+    r"(?i)\b(data:text/html|javascript:|vbscript:|file://)\b",
+    # Command injection: buat lebih spesifik (hapus token 'id')
+    r"(?i)\b(cat\s+/etc/passwd|ls\s+-la|whoami\b|uname\s+-a|rm\s+-rf|chmod\s+777)\b",
+    # Path traversal
+    r"(?i)\b(\.\./|\.\.\\|/etc/passwd|c:\\windows\\system32)\b",
 ]
 
-# Fungsi rekursif untuk memeriksa input berbahaya
 def contains_malicious_input(data: Any) -> bool:
     """
-    Cek apakah payload mengandung karakter berbahaya secara rekursif.
-    Args:
-        data: Data yang akan diperiksa (bisa dict, list, atau str).
-    Returns:
-        bool: True jika ada input berbahaya, False jika aman.
+    Versi yang lebih robust:
+    - Jika input adalah HTML, kita lihat pola-pola HTML (script/iframe/img javascript) pada teks mentah.
+    - Untuk pola 'perintah' dan token lain yang raw, hapus tag HTML dulu (so '.go.id' tidak matched).
     """
     if isinstance(data, dict):
-        return any(contains_malicious_input(value) for value in data.values())
-    elif isinstance(data, list):
-        return any(contains_malicious_input(item) for item in data)
-    elif isinstance(data, str):
-        sanitized_value = data.strip()
-        for pattern in suspicious_patterns:
-            if re.search(pattern, sanitized_value):
+        return any(contains_malicious_input(v) for v in data.values())
+    if isinstance(data, list):
+        return any(contains_malicious_input(v) for v in data)
+    if isinstance(data, str):
+        s = data.strip()
+
+        # 1) Cek pola HTML-berbahaya langsung terhadap teks mentah (jangan menghapus tag dulu)
+        for pat in suspicious_patterns[:5]:  # pola-pola awal yang ingin deteksi dalam HTML mentah
+            if re.search(pat, s, flags=re.IGNORECASE | re.DOTALL):
                 return True
+
+        # 2) Hapus tag HTML sebelum cek pola generik yang bisa terpicu oleh domain/atribut
+        s_no_tags = re.sub(r"<[^>]+>", " ", s)
+
+        # 3) decode percent-encoding untuk mendeteksi encoded attacks (opsional)
+        try:
+            from urllib.parse import unquote
+            s_decoded = unquote(s_no_tags)
+        except Exception:
+            s_decoded = s_no_tags
+
+        # 4) cek semua pola yang tersisa pada teks tanpa tag (dan setelah decode)
+        for pat in suspicious_patterns[5:]:
+            if re.search(pat, s_decoded, flags=re.IGNORECASE):
+                return True
+
     return False
 
 def validate_user_agent(request) -> None:
