@@ -44,7 +44,7 @@ SECRET_KEY = "MySatnusa"
 
 # Konfigurasi batas ukuran
 MAX_JSON_SIZE_MB = 4
-MAX_FILE_SIZE_MB = 2
+MAX_FILE_SIZE_MB = 6
 MAX_TOTAL_SIZE_MB = 10
 MAX_FILES_ALLOWED = 20
 ALLOWED_FILE_EXTENSIONS = {"jpg", "jpeg", "png", "pdf", "txt"}
